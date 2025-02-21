@@ -1,0 +1,15 @@
+const REGISTER_WIDTH: usize = 64 / 8;
+const REGISTER_BYTES: usize = 1;
+const OPCODE_BYTES: usize = 1;
+const ADDRESS_BYTES: usize = REGISTER_BYTES;
+const MMIO_ADDRESS_SPACE: usize = 42;
+const SIGNATURE: &str = "NISVC-EF";
+const DEFAULT_BINARY_NAME: &str = "nisvc.out";
+const LABEL: char = '!';
+const LITERAL: char = '$';
+const ADDRESS: char = '@';
+const ASSEMBLY_PTR: char = '.';
+const SEPERATOR: char = ';';
+const COMMENT: &str = "//";
+const OPEN_SECTION: char = '{';
+const CLOSE_SECTION: char = '}';
