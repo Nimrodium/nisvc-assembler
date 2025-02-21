@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use crate::{
-    constant,
+    constant::{self, Labels},
     data::{AssemblyError, AssemblyErrorCode, InterType, OpcodeTable, Severity},
 };
 
@@ -9,14 +11,53 @@ struct IntermediateObject {
     string: Option<String>,
     size: usize,
     is_resolved: bool,
+    fix_to_rambase: bool,
 }
 
 impl IntermediateObject {
     fn from_mnemonic(s: &str, expected_type: &InterType) -> Result<Self, AssemblyError> {
         todo!()
     }
+    fn resolve(
+        &mut self,
+        labels: &HashMap<String, constant::Register>,
+    ) -> Result<(), AssemblyError> {
+        let label = if let Some(str) = &self.string {
+            str
+        } else {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::ObjectAlreadyResolved,
+                reason: Some(format!("object {} already defined", self.object)),
+                severity: Severity::Warning,
+            });
+        };
+        self.object = match labels.get(label) {
+            Some(r) => *r as usize,
+            None => {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::UndefinedLabel,
+                    reason: Some(format!("label: [ {label} ] was not defined when needed")),
+                    severity: Severity::Fatal,
+                })
+            }
+        };
+
+        Ok(())
+    }
+    fn get_unresolved(&self) -> Result<String, AssemblyError> {
+        if let Some(str) = self.string.clone() {
+            Ok(str)
+        } else {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::ObjectAlreadyResolved,
+                severity: Severity::Fatal, // fatal here because it cannot proceed to return the string
+                reason: Some(format!("{} already resolved", self.object)),
+            });
+        }
+    }
     fn to_bytes(&self) -> Vec<u8> {
-        todo!()
+        let bytes = self.object.to_le_bytes();
+        bytes[0..self.size].to_vec()
     }
 }
 
@@ -52,6 +93,21 @@ impl IntermediateInstruction {
         Ok(Self { objects })
     }
     fn to_bytes(&self) -> Vec<u8> {
+        todo!()
+    }
+    fn resolve_imm(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
+        for object in &mut self.objects {
+            match object.intertype {
+                InterType::Imm => object.resolve(labels)?,
+                _ => continue,
+            }
+        }
+        Ok(())
+    }
+    fn resolve_program_addr(&mut self, labels: Labels) -> Result<(), AssemblyError> {
+        todo!()
+    }
+    fn resolve_relative_addr(&mut self, labels: Labels) -> Result<(), AssemblyError> {
         todo!()
     }
 }

@@ -1,10 +1,104 @@
 use std::collections::HashMap;
+
+use crate::constant::{self, Register};
+
+pub fn get_smallest_byte_size(integer: usize) -> Result<usize, AssemblyError> {
+    if integer > Register::MAX as usize {
+        return Err(AssemblyError {
+            code: AssemblyErrorCode::ObjectTooLarge,
+            severity: Severity::Fatal,
+            reason: Some(format!(
+                "integer too large to fit within target registers. {integer} larger than {}",
+                Register::MAX
+            )),
+        });
+    };
+    if integer > u64::MAX as usize {
+        return Ok(16);
+    } else if integer > u32::MAX as usize {
+        return Ok(8);
+    } else if integer > u16::MAX as usize {
+        return Ok(4);
+    } else if integer > u8::MAX as usize {
+        return Ok(2);
+    } else {
+        return Ok(1);
+    }
+}
 pub enum InterType {
     Reg,
     Addr,
     Imm,
     Op,
 }
+pub struct Labels {
+    table: HashMap<String, Label>,
+    head: usize,
+}
+impl Labels {
+    pub fn insert_label(&mut self, label: Label) {
+        self.table.insert(label.name.clone(), label);
+    }
+    pub fn resolve_immediate_labels(&mut self) {
+        for label in &mut self.table {
+            self.head += label.1.resolve(self.head);
+        }
+    }
+    pub fn resolve_program_labels(&mut self) {}
+    pub fn resolve_relative_labels(&mut self) {}
+}
+pub struct Label {
+    name: String,
+    resolved: Option<usize>,
+    data_type: InterType,
+    size: usize,
+}
+impl Label {
+    pub fn new_addr(name: &str, data_type: InterType) -> Result<Self, AssemblyError> {
+        let size = match data_type {
+            InterType::Reg => constant::REGISTER_BYTES,
+            InterType::Addr => constant::ADDRESS_BYTES,
+            InterType::Imm => {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::LiteralDefinedAsAddress,
+                    reason: Some(format!(
+                        "attempted to build immediate label [ {name} ] as address"
+                    )),
+                    severity: Severity::Fatal,
+                })
+            }
+            InterType::Op => {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::UnexpectedError,
+                    reason: Some(format!("attempted to create label with opcode data type")),
+                    severity: Severity::Fatal,
+                })
+            }
+        };
+
+        Ok(Self {
+            name: name.to_string(),
+            data_type,
+            resolved: None,
+            size,
+        })
+    }
+    pub fn new_imm(name: &str, literal: constant::Register) -> Result<Self, AssemblyError> {
+        let size = get_smallest_byte_size(literal as usize)?;
+        Ok(Self {
+            name: name.to_string(),
+            resolved: Some(literal as usize),
+            size,
+            data_type: InterType::Imm,
+        })
+    }
+    /// returns bytes to move head
+    pub fn resolve(&mut self, memory_head: usize) -> usize {
+        self.resolved = Some(memory_head);
+        self.size
+    }
+}
+
 pub enum Severity {
     Info,
     Warning,
@@ -12,9 +106,14 @@ pub enum Severity {
 }
 
 pub enum AssemblyErrorCode {
+    UnexpectedError,
     InvalidOpcodeDefinition,
     UnrecognizedOpcode,
     IncorrectNumberOfOperands,
+    ObjectAlreadyResolved,
+    UndefinedLabel,
+    ObjectTooLarge,
+    LiteralDefinedAsAddress,
 }
 
 pub struct AssemblyError {

@@ -1,4 +1,9 @@
-pub const REGISTER_WIDTH: usize = 64 / 8;
+use std::collections::HashMap;
+
+pub type Register = u64;
+pub type Labels = HashMap<String, Register>;
+pub const REGISTER_WIDTH: usize = size_of::<Register>();
+
 pub const REGISTER_BYTES: usize = 1;
 pub const OPCODE_BYTES: usize = 1;
 pub const ADDRESS_BYTES: usize = REGISTER_BYTES;
