@@ -6,11 +6,11 @@ pub fn get_smallest_byte_size(integer: usize) -> Result<usize, AssemblyError> {
     if integer > Register::MAX as usize {
         return Err(AssemblyError {
             code: AssemblyErrorCode::ObjectTooLarge,
-            severity: Severity::Fatal,
-            reason: Some(format!(
+
+            reason: format!(
                 "integer too large to fit within target registers. {integer} larger than {}",
                 Register::MAX
-            )),
+            ),
         });
     };
     if integer > u64::MAX as usize {
@@ -25,6 +25,7 @@ pub fn get_smallest_byte_size(integer: usize) -> Result<usize, AssemblyError> {
         return Ok(1);
     }
 }
+#[derive(PartialEq, Debug)]
 pub enum InterType {
     Reg,
     Addr,
@@ -39,11 +40,11 @@ impl Labels {
     pub fn insert_label(&mut self, label: Label) {
         self.table.insert(label.name.clone(), label);
     }
-    pub fn resolve_immediate_labels(&mut self) {
-        for label in &mut self.table {
-            self.head += label.1.resolve(self.head);
-        }
-    }
+    // pub fn resolve_immediate_labels(&mut self) {
+    //     for label in &mut self.table {
+    //         self.head += label.1.resolve_imm(self.head)?;
+    //     }
+    // }
     pub fn resolve_program_labels(&mut self) {}
     pub fn resolve_relative_labels(&mut self) {}
 }
@@ -61,17 +62,13 @@ impl Label {
             InterType::Imm => {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::LiteralDefinedAsAddress,
-                    reason: Some(format!(
-                        "attempted to build immediate label [ {name} ] as address"
-                    )),
-                    severity: Severity::Fatal,
+                    reason: format!("attempted to build immediate label [ {name} ] as address"),
                 })
             }
             InterType::Op => {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::UnexpectedError,
-                    reason: Some(format!("attempted to create label with opcode data type")),
-                    severity: Severity::Fatal,
+                    reason: format!("attempted to create label with opcode data type"),
                 })
             }
         };
@@ -92,34 +89,42 @@ impl Label {
             data_type: InterType::Imm,
         })
     }
-    /// returns bytes to move head
-    pub fn resolve(&mut self, memory_head: usize) -> usize {
+    /// resolves addresses
+    /// - returns bytes to move head
+    /// - returns ObjectAlreadyResolved if resolved contains a value
+    pub fn resolve_addr(&mut self, memory_head: usize) -> Result<usize, AssemblyError> {
+        if let Some(data) = self.resolved {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::ObjectAlreadyResolved,
+                reason: format!("label {} already resolved to {}", self.name, data),
+            });
+        }
         self.resolved = Some(memory_head);
-        self.size
+        Ok(self.size)
     }
 }
-
-pub enum Severity {
-    Info,
-    Warning,
-    Fatal,
-}
-
+#[derive(Debug)]
 pub enum AssemblyErrorCode {
     UnexpectedError,
     InvalidOpcodeDefinition,
     UnrecognizedOpcode,
     IncorrectNumberOfOperands,
     ObjectAlreadyResolved,
+    ObjectNotResolved,
     UndefinedLabel,
     ObjectTooLarge,
     LiteralDefinedAsAddress,
+    InvalidRegisterName,
+    EmptyLiteral,
+    InvalidImmediate,
+    InvalidAddress,
+    CLIArgParseError,
 }
 
 pub struct AssemblyError {
     pub code: AssemblyErrorCode,
-    pub reason: Option<String>,
-    pub severity: Severity,
+    pub reason: String,
+    // pub severity: Severity,
 }
 
 pub struct OpcodeEntry {
@@ -132,10 +137,7 @@ impl OpcodeEntry {
         if field_types.len() != fields {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::InvalidOpcodeDefinition,
-                reason: Some(format!(
-                    "opcode field count does not align with defined field type length"
-                )),
-                severity: Severity::Fatal,
+                reason: format!("opcode field count does not align with defined field type length"),
             });
         }
         Ok(OpcodeEntry {
@@ -320,17 +322,66 @@ impl OpcodeTable {
         Ok(OpcodeTable { table })
     }
 
-    pub fn fetch_entry(&self, key: &str) -> Result<&OpcodeEntry, AssemblyError> {
+    pub fn get_opcode(&self, key: &str) -> Result<&OpcodeEntry, AssemblyError> {
         let entry = match self.table.get(key).ok_or("") {
             Ok(entry) => entry,
             Err(_) => {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::UnrecognizedOpcode,
-                    reason: Some(format!("[ {key} ] is not a valid operation")),
-                    severity: Severity::Fatal,
+                    reason: format!("[ {key} ] is not a valid operation"),
                 })
             }
         };
         Ok(entry)
+    }
+}
+
+pub struct RegisterTable {
+    table: HashMap<String, usize>,
+}
+impl RegisterTable {
+    pub fn build_table() -> Self {
+        let table: HashMap<String, usize> = HashMap::from([
+            ("r1".to_string(), 1),
+            ("r2".to_string(), 2),
+            ("r3".to_string(), 3),
+            ("r4".to_string(), 4),
+            ("r5".to_string(), 5),
+            ("r6".to_string(), 6),
+            ("r7".to_string(), 7),
+            ("r8".to_string(), 8),
+            ("r9".to_string(), 9),
+            ("r10".to_string(), 10),
+            ("r11".to_string(), 11),
+            ("r12".to_string(), 12),
+            ("r13".to_string(), 13),
+            ("r14".to_string(), 14),
+            ("r15".to_string(), 15),
+            ("r16".to_string(), 16),
+            ("r17".to_string(), 17),
+            ("r18".to_string(), 18),
+            ("r19".to_string(), 19),
+            ("r20".to_string(), 20),
+            ("pc".to_string(), 21),
+            ("sp".to_string(), 22),
+            ("o1".to_string(), 23),
+            ("o2".to_string(), 24),
+            ("o3".to_string(), 25),
+            ("o4".to_string(), 26),
+            ("o5".to_string(), 27),
+        ]);
+        Self { table }
+    }
+    pub fn get_reg(&self, reg_str: &str) -> Result<usize, AssemblyError> {
+        let reg_id = match self.table.get(reg_str) {
+            Some(id) => id,
+            None => {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::InvalidRegisterName,
+                    reason: format!("[ {reg_str} ] is not a valid register"),
+                })
+            }
+        };
+        Ok(*reg_id)
     }
 }
