@@ -6,7 +6,7 @@ use crate::{
         get_smallest_byte_size, AssemblyError, AssemblyErrorCode, InterType, OpcodeTable,
         RegisterTable,
     },
-    verbose_println,
+    verbose_println, very_verbose_println,
 };
 pub const HEX: char = 'x';
 pub const BINARY: char = 'b';
@@ -300,7 +300,7 @@ impl IntermediateInstruction {
         let tokenized = tokenize_instruction(raw)?;
         let opcode_str = &tokenized[0];
         let operation = opcode_table.get_opcode(opcode_str)?;
-        verbose_println!("recognized operation {operation:?}");
+        very_verbose_println!("recognized operation {operation:?}");
         if tokenized.len() - 1 != operation.fields {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::IncorrectNumberOfOperands,
@@ -404,7 +404,7 @@ fn tokenize_instruction(s: &str) -> Result<Vec<String>, AssemblyError> {
                     SPACE | COMMA => match state {
                         TokenizerState::InString => token_buf.push(char_token),
                         TokenizerState::None => {
-                            verbose_println!("built token {token_buf}");
+                            very_verbose_println!("built token {token_buf}");
                             buf.push(token_buf.clone());
                             token_buf.clear();
                         }
@@ -414,10 +414,10 @@ fn tokenize_instruction(s: &str) -> Result<Vec<String>, AssemblyError> {
             }
         }
     }
-    verbose_println!("built token {token_buf}");
+    very_verbose_println!("built token {token_buf}");
     buf.push(token_buf.clone());
     token_buf.clear();
-    verbose_println!("tokenized {buf:?}");
+    very_verbose_println!("tokenized {buf:?}");
     Ok(buf)
 }
 

@@ -1,4 +1,4 @@
-use std::{alloc::handle_alloc_error, process::exit};
+use std::{alloc::handle_alloc_error, fmt::format, process::exit};
 
 use assembler::Assembler;
 use colorize::AnsiColor;
@@ -12,6 +12,8 @@ mod package;
 mod parser;
 
 static mut VERBOSE_FLAG: bool = false;
+static mut VERY_VERBOSE_FLAG: bool = false;
+static mut VERY_VERY_VERBOSE_FLAG: bool = false;
 
 // will add line number later maybe
 fn handle_fatal_assembly_err(err: AssemblyError) -> ! {
@@ -32,9 +34,33 @@ fn _verbose_println(msg: &str) {
     }
 }
 
+fn _very_verbose_println(msg: &str) {
+    unsafe {
+        if VERY_VERBOSE_FLAG {
+            println!("{NAME}: {} {}", "very-verbose:".yellow(), msg)
+        }
+    }
+}
+
+fn _very_very_verbose_println(msg: &str) {
+    unsafe {
+        if VERY_VERY_VERBOSE_FLAG {
+            println!("{NAME}: {} {}", "very-very-verbose:".yellow(), msg)
+        }
+    }
+}
+
 #[macro_export]
 macro_rules! verbose_println {
     ($($arg:tt)*) => (crate::_verbose_println(&format!($($arg)*)));
+}
+#[macro_export]
+macro_rules! very_verbose_println {
+    ($($arg:tt)*) => (crate::_very_verbose_println(&format!($($arg)*)));
+}
+#[macro_export]
+macro_rules! very_very_verbose_println {
+    ($($arg:tt)*) => (crate::_very_very_verbose_println(&format!($($arg)*)));
 }
 
 fn write_binary(
@@ -82,12 +108,40 @@ fn main() {
                         reason: format!("verbose flag set twice'{arg}'"),
                     })
                 }
-                VERBOSE_FLAG = true
+                VERBOSE_FLAG = true;
+                verbose_println!("verbose print level 1 enabled")
             },
+            "-vv" | "--very-verbose" => unsafe {
+                VERY_VERBOSE_FLAG = true;
+                VERBOSE_FLAG = true;
+                very_verbose_println!("verbose print level 2 enabled")
+            },
+            "-vvv" | "--very-very-verbose" => unsafe {
+                VERBOSE_FLAG = true;
+                VERY_VERBOSE_FLAG = true;
+                VERY_VERY_VERBOSE_FLAG = true;
+                very_very_verbose_println!("verbose print level 3 enabled")
+            },
+            "-h" | "--help" => {
+                println!("Usage: {NAME} [options...] [nisvc-asmfile...]\n\
+                    Options:\n\
+                    \t-h,     --help              -- print this message\n\
+                    \t-v,     --verbose           -- enable verbose printing\n\
+                    \t-vv,    --very-verbose      -- enable very verbose printing\n\
+                    \t-vvv,   --very-very-verbose -- enable very very verbose printing\n\
+                    \t-o,     --output <outfile>  -- output file (when not specified {DEFAULT_BINARY_NAME} will be used)"
+                );
+                exit(0)
+            }
+            f if f.starts_with("--") || f.starts_with("-") => {
+                handle_fatal_assembly_err(AssemblyError {
+                    code: AssemblyErrorCode::CLIArgParseError,
+                    reason: format!("unrecognized flag :: {f}"),
+                })
+            }
             _ => input_files.push(arg),
         }
     }
-
     verbose_println!("output file: {output_file}");
     // println!("g");
     if input_files.len() < 1 {
@@ -99,7 +153,7 @@ fn main() {
 
     let mut assembler = Assembler::new();
     for file in input_files {
-        verbose_println!("adding source file {file} to assembler");
+        very_verbose_println!("adding source file {file} to assembler");
         match assembler.load_file(file) {
             Ok(()) => (),
             Err(err) => handle_fatal_assembly_err(err),
