@@ -14,15 +14,15 @@ pub fn get_smallest_byte_size(integer: usize) -> Result<usize, AssemblyError> {
         });
     };
     if integer > u64::MAX as usize {
-        return Ok(16);
+        Ok(16)
     } else if integer > u32::MAX as usize {
-        return Ok(8);
+        Ok(8)
     } else if integer > u16::MAX as usize {
-        return Ok(4);
+        Ok(4)
     } else if integer > u8::MAX as usize {
-        return Ok(2);
+        Ok(2)
     } else {
-        return Ok(1);
+        Ok(1)
     }
 }
 #[derive(PartialEq, Debug)]
@@ -40,11 +40,7 @@ impl Labels {
     pub fn insert_label(&mut self, label: Label) {
         self.table.insert(label.name.clone(), label);
     }
-    // pub fn resolve_immediate_labels(&mut self) {
-    //     for label in &mut self.table {
-    //         self.head += label.1.resolve_imm(self.head)?;
-    //     }
-    // }
+
     pub fn resolve_program_labels(&mut self) {}
     pub fn resolve_relative_labels(&mut self) {}
 }
@@ -119,6 +115,9 @@ pub enum AssemblyErrorCode {
     InvalidImmediate,
     InvalidAddress,
     CLIArgParseError,
+    NotImplemented,
+    SourceFileInitializationError,
+    SyntaxError,
 }
 
 pub struct AssemblyError {
@@ -126,7 +125,7 @@ pub struct AssemblyError {
     pub reason: String,
     // pub severity: Severity,
 }
-
+#[derive(Debug)]
 pub struct OpcodeEntry {
     pub code: usize,
     pub fields: usize,
@@ -137,7 +136,7 @@ impl OpcodeEntry {
         if field_types.len() != fields {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::InvalidOpcodeDefinition,
-                reason: format!("opcode field count does not align with defined field type length"),
+                reason: format!("opcode field count does not align with defined field type length :: in [ {code:#x} ] [ {fields} ] [ {field_types:?} ]"),
             });
         }
         Ok(OpcodeEntry {
@@ -208,7 +207,7 @@ impl OpcodeTable {
                 "div".to_string(),
                 OpcodeEntry::new(
                     0x08,
-                    3,
+                    4,
                     vec![
                         InterType::Reg,
                         InterType::Reg,

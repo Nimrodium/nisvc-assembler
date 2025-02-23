@@ -1,0 +1,5 @@
+.data;
+    louis equ spoink
+.program;
+    movim r1,$xff
+    mov r2,r1;

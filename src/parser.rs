@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt};
 
 use crate::{
     constant::{self, Labels, ABSOLUTE, LABEL, OPCODE_BYTES, RELATIVE},
@@ -6,6 +6,7 @@ use crate::{
         get_smallest_byte_size, AssemblyError, AssemblyErrorCode, InterType, OpcodeTable,
         RegisterTable,
     },
+    verbose_println,
 };
 pub const HEX: char = 'x';
 pub const BINARY: char = 'b';
@@ -102,7 +103,7 @@ fn parse_value(
     }
     Ok((parsed_value.0, parsed_value.1, is_relative))
 }
-
+#[derive(Debug)]
 struct IntermediateObject {
     intertype: InterType,
     object: Option<usize>,
@@ -214,6 +215,7 @@ impl IntermediateObject {
             });
         }
     }
+
     fn to_bytes(&self) -> Result<Vec<u8>, AssemblyError> {
         let object = if let Some(obj) = self.object {
             obj
@@ -232,9 +234,61 @@ impl IntermediateObject {
         Ok(bytes[0..self.size.unwrap()].to_vec())
     }
 }
+impl fmt::Display for IntermediateObject {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let is_relative = match self.is_relative {
+            true => "Relative".to_string(),
+            false => "Absolute".to_string(),
+        };
+        let (obj_rep, size, is_resolved) = match self.is_resolved {
+            true => match self.object {
+                Some(o) => (
+                    o.to_string(),
+                    {
+                        if let Some(size) = self.size {
+                            format!("{size} bytes")
+                        } else {
+                            unreachable!("resolved objects should always have a known size")
+                        }
+                    },
+                    "Resolved".to_string(),
+                ),
+                None => unreachable!("if resolved object should always be some"),
+            },
+            false => match &self.string {
+                Some(s) => (
+                    s.clone(),
+                    "size unknown".to_string(),
+                    "Unresolved".to_string(),
+                ),
+                None => unreachable!("if not resolved string should always be some"),
+            },
+        };
+        let signature = match self.intertype {
+            InterType::Reg => format!("Register : [ {obj_rep} ] {size}"),
+            InterType::Addr => {
+                format!("{is_relative} {is_resolved} Address : [ {obj_rep} ] {size}")
+            }
+            InterType::Imm => {
+                format!("{is_relative} {is_resolved} Immediate : [ {obj_rep} ] {size}")
+            }
+            InterType::Op => format!("Opcode : [ {obj_rep} ] {size}"),
+        };
+        write!(f, "[{signature}]")
+    }
+}
 
 pub struct IntermediateInstruction {
     objects: Vec<IntermediateObject>,
+}
+impl fmt::Display for IntermediateInstruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut obj = String::new();
+        for object in &self.objects {
+            obj.push_str(&format!("{}:", object.to_string()));
+        }
+        write!(f, "[IR Object {obj} ]")
+    }
 }
 impl IntermediateInstruction {
     fn parse_string(
@@ -243,10 +297,10 @@ impl IntermediateInstruction {
         register_table: &RegisterTable,
     ) -> Result<Self, AssemblyError> {
         let mut objects = vec![];
-        let tokenized = tokenize_instruction(raw);
+        let tokenized = tokenize_instruction(raw)?;
         let opcode_str = &tokenized[0];
         let operation = opcode_table.get_opcode(opcode_str)?;
-
+        verbose_println!("recognized operation {operation:?}");
         if tokenized.len() - 1 != operation.fields {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::IncorrectNumberOfOperands,
@@ -257,8 +311,14 @@ impl IntermediateInstruction {
                 ),
             });
         }
-
-        for (i, raw_token) in tokenized.iter().enumerate() {
+        let op_obj = IntermediateObject::from_mnemonic(
+            opcode_str,
+            &InterType::Op,
+            opcode_table,
+            register_table,
+        )?;
+        objects.push(op_obj);
+        for (i, raw_token) in tokenized.iter().skip(1).enumerate() {
             let expected_type = match operation.field_types.get(i){
                 Some(t) => t,
                 None => unreachable!("field count is already verified to match lengh, so element should always exist")
@@ -299,8 +359,66 @@ impl IntermediateInstruction {
     }
 }
 
-fn tokenize_instruction(s: &str) -> Vec<String> {
-    todo!()
+enum TokenizerState {
+    InString,
+    None,
+}
+const STR: char = '"';
+const ESCAPE: char = '\\';
+const SPACE: char = ' ';
+const COMMA: char = ',';
+fn tokenize_instruction(s: &str) -> Result<Vec<String>, AssemblyError> {
+    let mut buf: Vec<String> = vec![];
+
+    // just gonna implement a manual split so i can preserve strings
+    let mut token_buf: String = String::new();
+    let mut state = TokenizerState::None;
+    let mut escape = false;
+    for char_token in s.chars() {
+        if escape {
+            // process escape stuff
+            // there might be a better way to do this
+            match char_token {
+                ESCAPE => token_buf.push(ESCAPE),
+                'n' => token_buf.push('\n'),
+                't' => token_buf.push('\t'),
+                _ => {
+                    return Err(AssemblyError {
+                        code: AssemblyErrorCode::SyntaxError,
+                        reason: format!("\\{char_token} is not a valid escape sequence"),
+                    })
+                }
+            };
+            escape = false
+        } else {
+            match char_token {
+                STR => {
+                    state = match state {
+                        TokenizerState::InString => TokenizerState::None,
+                        TokenizerState::None => TokenizerState::InString,
+                    }
+                }
+                ESCAPE => escape = true,
+
+                _ => match char_token {
+                    SPACE | COMMA => match state {
+                        TokenizerState::InString => token_buf.push(char_token),
+                        TokenizerState::None => {
+                            verbose_println!("built token {token_buf}");
+                            buf.push(token_buf.clone());
+                            token_buf.clear();
+                        }
+                    },
+                    _ => token_buf.push(char_token),
+                },
+            }
+        }
+    }
+    verbose_println!("built token {token_buf}");
+    buf.push(token_buf.clone());
+    token_buf.clear();
+    verbose_println!("tokenized {buf:?}");
+    Ok(buf)
 }
 
 pub struct IntermediateProgram {
@@ -308,7 +426,7 @@ pub struct IntermediateProgram {
     size: Option<usize>,
 }
 impl IntermediateProgram {
-    pub fn parse_program(program_raw: Vec<&str>) -> Result<IntermediateProgram, AssemblyError> {
+    pub fn parse_program(program_raw: &Vec<String>) -> Result<IntermediateProgram, AssemblyError> {
         let opcode_table = OpcodeTable::build_table()?;
         let register_table = RegisterTable::build_table();
         let mut program = vec![];
@@ -322,6 +440,7 @@ impl IntermediateProgram {
                 &opcode_table,
                 &register_table,
             )?;
+            verbose_println!("built instruction {instruction}");
             program.push(instruction);
         }
         Ok(Self {
