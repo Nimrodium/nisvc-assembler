@@ -1,5 +1,11 @@
 .data;
-    louis equ spoink
+    louis equ $1
 .program;
-    movim r1,$xff
+    !label
+    movim r1,$x10
+    !label2
+    movim r3,@43
+    !label3
     mov r2,r1;
+    !label4
+    movim r1,$59

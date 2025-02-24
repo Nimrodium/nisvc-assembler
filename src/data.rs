@@ -1,6 +1,10 @@
-use std::collections::HashMap;
-
-use crate::constant::{self, Register};
+use crate::{
+    constant::{self, Register, ADDRESS_BYTES},
+    parser::IntermediateProgram,
+};
+use colorize::AnsiColor;
+use constant::NAME;
+use std::{collections::HashMap, fmt, ops::Add};
 
 pub fn get_smallest_byte_size(integer: usize) -> Result<usize, AssemblyError> {
     if integer > Register::MAX as usize {
@@ -41,64 +45,96 @@ impl Labels {
         self.table.insert(label.name.clone(), label);
     }
 
-    pub fn resolve_program_labels(&mut self) {}
-    pub fn resolve_relative_labels(&mut self) {}
+    pub fn resolve_program_labels(&mut self, program: IntermediateProgram) {}
+    pub fn resolve_relative_labels(&mut self, program: IntermediateProgram) {}
 }
 pub struct Label {
-    name: String,
+    pub name: String,
     resolved: Option<usize>,
-    data_type: InterType,
-    size: usize,
+    // data_type: InterType,
+    // size: usize,
+}
+impl fmt::Display for Label {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let resolved = match self.resolved {
+            Some(address) => format!("resolved [ {} ]", address.to_string()),
+            None => "unresolved".to_string(),
+        };
+        write!(f, "[ {} ]::{}", self.name, resolved)
+    }
 }
 impl Label {
-    pub fn new_addr(name: &str, data_type: InterType) -> Result<Self, AssemblyError> {
-        let size = match data_type {
-            InterType::Reg => constant::REGISTER_BYTES,
-            InterType::Addr => constant::ADDRESS_BYTES,
-            InterType::Imm => {
-                return Err(AssemblyError {
-                    code: AssemblyErrorCode::LiteralDefinedAsAddress,
-                    reason: format!("attempted to build immediate label [ {name} ] as address"),
-                })
-            }
-            InterType::Op => {
-                return Err(AssemblyError {
-                    code: AssemblyErrorCode::UnexpectedError,
-                    reason: format!("attempted to create label with opcode data type"),
-                })
-            }
-        };
-
-        Ok(Self {
+    pub fn new(name: &str) -> Self {
+        Self {
             name: name.to_string(),
-            data_type,
             resolved: None,
-            size,
-        })
-    }
-    pub fn new_imm(name: &str, literal: constant::Register) -> Result<Self, AssemblyError> {
-        let size = get_smallest_byte_size(literal as usize)?;
-        Ok(Self {
-            name: name.to_string(),
-            resolved: Some(literal as usize),
-            size,
-            data_type: InterType::Imm,
-        })
-    }
-    /// resolves addresses
-    /// - returns bytes to move head
-    /// - returns ObjectAlreadyResolved if resolved contains a value
-    pub fn resolve_addr(&mut self, memory_head: usize) -> Result<usize, AssemblyError> {
-        if let Some(data) = self.resolved {
-            return Err(AssemblyError {
-                code: AssemblyErrorCode::ObjectAlreadyResolved,
-                reason: format!("label {} already resolved to {}", self.name, data),
-            });
         }
-        self.resolved = Some(memory_head);
-        Ok(self.size)
+    }
+    pub fn resolve(&mut self, address: usize) {
+        self.resolved = Some(address)
+    }
+    pub fn dereference(&self) -> Result<usize, AssemblyError> {
+        match self.resolved {
+            Some(address) => Ok(address),
+            None => Err(AssemblyError {
+                code: AssemblyErrorCode::UnresolvedLabel,
+                reason: format!(
+                    "attempted to dereference unresolved label [ {} ]",
+                    self.name
+                ),
+            }),
+        }
     }
 }
+// impl Label {
+//     pub fn new_addr(name: &str) -> Self {
+//         // let size = match data_type {
+//         // InterType::Reg => constant::REGISTER_BYTES,
+//         // InterType::Addr => constant::ADDRESS_BYTES,
+//         // InterType::Imm => {
+//         //     return Err(AssemblyError {
+//         //         code: AssemblyErrorCode::LiteralDefinedAsAddress,
+//         //         reason: format!("attempted to build immediate label [ {name} ] as address"),
+//         //     })
+//         // }
+//         // InterType::Op => {
+//         //     return Err(AssemblyError {
+//         //         code: AssemblyErrorCode::UnexpectedError,
+//         //         reason: format!("attempted to create label with opcode data type"),
+//         //     })
+//         // }
+//         // };
+
+//         Self {
+//             name: name.to_string(),
+//             data_type: InterType::Addr,
+//             resolved: None,
+//             // size: ADDRESS_BYTES,
+//         }
+//     }
+//     pub fn new_imm(name: &str, literal: constant::Register) -> Result<Self, AssemblyError> {
+//         let size = get_smallest_byte_size(literal as usize)?;
+//         Ok(Self {
+//             name: name.to_string(),
+//             resolved: Some(literal as usize),
+//             // size,
+//             // data_type: InterType::Imm,
+//         })
+//     }
+//     /// resolves addresses
+//     /// - returns bytes to move head
+//     /// - returns ObjectAlreadyResolved if resolved contains a value
+//     pub fn resolve_addr(&mut self, memory_head: usize) -> Result<usize, AssemblyError> {
+//         if let Some(data) = self.resolved {
+//             return Err(AssemblyError {
+//                 code: AssemblyErrorCode::ObjectAlreadyResolved,
+//                 reason: format!("label {} already resolved to {}", self.name, data),
+//             });
+//         }
+//         self.resolved = Some(memory_head);
+//         Ok(self.size)
+//     }
+// }
 #[derive(Debug)]
 pub enum AssemblyErrorCode {
     UnexpectedError,
@@ -118,12 +154,24 @@ pub enum AssemblyErrorCode {
     NotImplemented,
     SourceFileInitializationError,
     SyntaxError,
+    UnresolvedLabel,
 }
 
 pub struct AssemblyError {
     pub code: AssemblyErrorCode,
     pub reason: String,
     // pub severity: Severity,
+}
+impl fmt::Display for AssemblyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let string = format!(
+            "{NAME}: {} {} :: {}",
+            "error:".red(),
+            format!("{:?}", self.code).yellow(),
+            self.reason
+        );
+        write!(f, "{string}")
+    }
 }
 #[derive(Debug)]
 pub struct OpcodeEntry {

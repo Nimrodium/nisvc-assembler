@@ -17,12 +17,7 @@ static mut VERY_VERY_VERBOSE_FLAG: bool = false;
 
 // will add line number later maybe
 fn handle_fatal_assembly_err(err: AssemblyError) -> ! {
-    println!(
-        "{NAME}: {} {} :: {}",
-        "error:".red(),
-        format!("{:?}", err.code).yellow(),
-        err.reason
-    );
+    println!("{err}");
     exit(1)
 }
 
@@ -77,7 +72,17 @@ fn write_binary(
     nisvc_ef_img.extend(binary.as_slice());
     Ok(())
 }
-
+fn help() -> ! {
+    println!("Usage: {NAME} [options...] [nisvc-asmfile...]\n\
+        Options:\n\
+        \t-h,     --help              -- print this message\n\
+        \t-v,     --verbose           -- enable verbose printing\n\
+        \t-vv,    --very-verbose      -- enable very verbose printing\n\
+        \t-vvv,   --very-very-verbose -- enable very very verbose printing\n\
+        \t-o,     --output <outfile>  -- output file (when not specified {DEFAULT_BINARY_NAME} will be used)"
+    );
+    exit(0)
+}
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
@@ -122,22 +127,16 @@ fn main() {
                 VERY_VERY_VERBOSE_FLAG = true;
                 very_very_verbose_println!("verbose print level 3 enabled")
             },
-            "-h" | "--help" => {
-                println!("Usage: {NAME} [options...] [nisvc-asmfile...]\n\
-                    Options:\n\
-                    \t-h,     --help              -- print this message\n\
-                    \t-v,     --verbose           -- enable verbose printing\n\
-                    \t-vv,    --very-verbose      -- enable very verbose printing\n\
-                    \t-vvv,   --very-very-verbose -- enable very very verbose printing\n\
-                    \t-o,     --output <outfile>  -- output file (when not specified {DEFAULT_BINARY_NAME} will be used)"
-                );
-                exit(0)
-            }
+            "-h" | "--help" => help(),
             f if f.starts_with("--") || f.starts_with("-") => {
-                handle_fatal_assembly_err(AssemblyError {
-                    code: AssemblyErrorCode::CLIArgParseError,
-                    reason: format!("unrecognized flag :: {f}"),
-                })
+                println!(
+                    "{}",
+                    AssemblyError {
+                        code: AssemblyErrorCode::CLIArgParseError,
+                        reason: format!("unrecognized flag :: {f}"),
+                    }
+                );
+                help()
             }
             _ => input_files.push(arg),
         }
@@ -159,21 +158,32 @@ fn main() {
             Err(err) => handle_fatal_assembly_err(err),
         };
     }
+    match assembler.is_entry_point_located() {
+        Ok(()) => verbose_println!(
+            "entry point label located [ {} ]",
+            assembler.entry_point.as_ref().unwrap().name
+        ),
+        Err(err) => handle_fatal_assembly_err(err),
+    }
+    // generate IR
     match assembler.parse() {
         Ok(()) => (),
         Err(err) => handle_fatal_assembly_err(err),
     };
-    verbose_println!("parsed program");
+
+    // resolve IR placeholder labels
     match assembler.resolve() {
         Ok(()) => (),
         Err(err) => handle_fatal_assembly_err(err),
     }
-    verbose_println!("resolve");
+
+    // generate nisvc machine code
     let (binary, program_length, data_length) = match assembler.package() {
         Ok(i) => i,
         Err(err) => handle_fatal_assembly_err(err),
     };
-    verbose_println!("package");
+
+    // write machine code to file
     match write_binary(binary, program_length, data_length) {
         Ok(()) => (),
         Err(err) => handle_fatal_assembly_err(err),

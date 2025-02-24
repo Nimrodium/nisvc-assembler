@@ -1,12 +1,12 @@
 use std::{collections::HashMap, fmt};
 
 use crate::{
-    constant::{self, Labels, ABSOLUTE, LABEL, OPCODE_BYTES, RELATIVE},
+    constant::{self, Labels, ABSOLUTE, LABEL, MMIO_ADDRESS_SPACE, OPCODE_BYTES, RELATIVE},
     data::{
-        get_smallest_byte_size, AssemblyError, AssemblyErrorCode, InterType, OpcodeTable,
+        get_smallest_byte_size, AssemblyError, AssemblyErrorCode, InterType, Label, OpcodeTable,
         RegisterTable,
     },
-    verbose_println, very_verbose_println,
+    verbose_println, very_verbose_println, very_very_verbose_println,
 };
 pub const HEX: char = 'x';
 pub const BINARY: char = 'b';
@@ -70,7 +70,7 @@ fn parse_value(
         },
         LABEL => (None, Some(raw.to_string())),
 
-        p if p.is_digit(10) => match usize::from_str_radix(raw, 10) {
+        p if p.is_digit(10) => match usize::from_str_radix(&immediate_str[1..], 10) {
             Ok(r) => (Some(r), None),
             Err(err) => {
                 return Err(AssemblyError {
@@ -351,11 +351,26 @@ impl IntermediateInstruction {
         }
         Ok(())
     }
-    fn resolve_program_addr(&mut self, labels: Labels) -> Result<(), AssemblyError> {
+    fn resolve_program_addr(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
         todo!()
     }
-    fn resolve_relative_addr(&mut self, labels: Labels) -> Result<(), AssemblyError> {
+    fn resolve_relative_addr(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
         todo!()
+    }
+
+    fn get_size(&self) -> Result<usize, AssemblyError> {
+        let mut size = 0;
+        for object in &self.objects {
+            size += if let Some(i) = object.size {
+                i
+            } else {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::ObjectNotResolved,
+                    reason: format!("cannot calculate size of unresolved object : {object}"),
+                });
+            }
+        }
+        Ok(size)
     }
 }
 
@@ -448,17 +463,71 @@ impl IntermediateProgram {
             size: None,
         })
     }
-    pub fn resolve_immediates(&mut self) {}
+
+    pub fn collect_program_labels(
+        &self,
+        clean_program_src: &Vec<String>,
+    ) -> Result<Vec<Label>, AssemblyError> {
+        let mut labels: Vec<Label> = vec![];
+        let mut program_head = MMIO_ADDRESS_SPACE;
+        // let mut line = 0;
+
+        for (i, line) in clean_program_src.iter().enumerate() {
+            if line.trim().starts_with(LABEL) {
+                let mut label = Label::new(&line.trim()[1..]);
+                label.resolve(program_head);
+                very_verbose_println!("found program label {label}");
+                labels.push(label)
+            } else {
+                let instruction = match self.instructions.get(i) {
+                    Some(instruction) => instruction,
+                    None => {
+                        return Err(AssemblyError {
+                            code: AssemblyErrorCode::UnexpectedError,
+                            reason: format!(
+                                "attempted to read instruction at index {i} associated with {line} but none was found"
+                            ),
+                        })
+                    }
+                };
+
+                // very_very_verbose_println!("advanced head by {instruction_size}");
+                program_head += instruction.get_size()?;
+                very_very_verbose_println!(
+                    "head::{program_head} advanced past {line} :: {instruction}"
+                );
+            }
+        }
+        Ok(labels)
+    }
+    pub fn resolve_immediates(&mut self, labels: Labels) -> Result<(), AssemblyError> {
+        for instruction in &mut self.instructions {
+            instruction.resolve_imm(&labels)?;
+        }
+        Ok(())
+    }
 
     /// called after intermediate resolution
+    /// returns size in bytes
     pub fn estimate_program_size(&mut self) -> Result<(), AssemblyError> {
-        todo!()
+        let mut size = 0;
+        for instruction in &self.instructions {
+            size += instruction.get_size()?;
+        }
+        self.size = Some(size);
+        Ok(())
     }
-    pub fn resolve_program_addresses(&mut self) -> Result<(), AssemblyError> {
-        todo!()
+    pub fn resolve_program_addresses(&mut self, labels: Labels) -> Result<(), AssemblyError> {
+        for instruction in &mut self.instructions {
+            instruction.resolve_program_addr(&labels)?;
+        }
+        Ok(())
     }
-    pub fn resolve_ram_addresses(&mut self) -> Result<(), AssemblyError> {
-        todo!()
+    pub fn resolve_ram_addresses(&mut self, labels: Labels) -> Result<(), AssemblyError> {
+        for instruction in &mut self.instructions {
+            instruction.resolve_relative_addr(&labels)?;
+        }
+        Ok(())
     }
     pub fn to_bytes(&self) -> Result<Vec<u8>, AssemblyError> {
         let mut byte_vector: Vec<u8> = vec![];
@@ -468,4 +537,12 @@ impl IntermediateProgram {
         }
         Ok(byte_vector)
     }
+}
+
+pub struct DataParser;
+impl DataParser {
+    fn parse() {
+        todo!()
+    }
+    // fn
 }
