@@ -12,7 +12,7 @@ pub struct Assembler {
     tokenized_raw_program_source: Vec<String>,
     program: Option<IntermediateProgram>,
     data: Option<u8>, // placeholder
-    labels: Option<Labels>,
+    labels: Labels,
     pub entry_point: Option<Label>,
 }
 
@@ -23,7 +23,7 @@ impl Assembler {
             tokenized_raw_program_source: vec![],
             program: None,
             data: None,
-            labels: None,
+            labels: Labels::new(),
             entry_point: None,
         }
     }
@@ -90,6 +90,11 @@ impl Assembler {
 
     pub fn resolve(&mut self) -> Result<(), AssemblyError> {
         // resolve labels within source
+        self.program
+            .as_mut()
+            .unwrap()
+            .resolve_immediates(&self.labels);
+
         let program_labels = if let Some(program) = &self.program {
             program.collect_program_labels(&self.tokenized_raw_program_source)?
         } else {
@@ -98,11 +103,16 @@ impl Assembler {
                 reason: "program not parsed".to_string(),
             });
         };
+        very_verbose_println!("program labels: {program_labels:?}");
+        for program_label in &program_labels {
+            self.labels.insert_label(program_label);
+        }
 
         todo!()
     }
     pub fn package(&self) -> Result<(Vec<u8>, u64, u64), AssemblyError> {
         // generate machine code
+
         // package into NISVC Executable Format Binary Image
         todo!()
     }

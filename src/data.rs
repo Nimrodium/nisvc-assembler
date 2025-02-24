@@ -38,16 +38,27 @@ pub enum InterType {
 }
 pub struct Labels {
     table: HashMap<String, Label>,
-    head: usize,
 }
 impl Labels {
-    pub fn insert_label(&mut self, label: Label) {
-        self.table.insert(label.name.clone(), label);
+    pub fn new() -> Self {
+        Self {
+            table: HashMap::new(),
+        }
     }
-
-    pub fn resolve_program_labels(&mut self, program: IntermediateProgram) {}
-    pub fn resolve_relative_labels(&mut self, program: IntermediateProgram) {}
+    pub fn insert_label(&mut self, label: &Label) {
+        self.table.insert(label.name.clone(), label.clone());
+    }
+    pub fn get_label(&self, label: &str) -> Result<&Label, AssemblyError> {
+        match self.table.get(label) {
+            Some(lbl) => Ok(lbl),
+            None => Err(AssemblyError {
+                code: AssemblyErrorCode::UndefinedLabel,
+                reason: format!("label [ {label} ] was not found in the label table"),
+            }),
+        }
+    }
 }
+#[derive(Clone)]
 pub struct Label {
     pub name: String,
     resolved: Option<usize>,
@@ -61,6 +72,12 @@ impl fmt::Display for Label {
             None => "unresolved".to_string(),
         };
         write!(f, "[ {} ]::{}", self.name, resolved)
+    }
+}
+impl fmt::Debug for Label {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let label = self.to_string();
+        write!(f, "({label})")
     }
 }
 impl Label {

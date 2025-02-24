@@ -1,7 +1,4 @@
-use std::collections::HashMap;
-
 pub type Register = u64;
-pub type Labels = HashMap<String, Register>;
 pub const REGISTER_WIDTH: usize = size_of::<Register>();
 
 pub const NAME: &str = "nisvc-as";

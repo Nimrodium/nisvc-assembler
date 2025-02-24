@@ -1,10 +1,10 @@
 use std::{collections::HashMap, fmt};
 
 use crate::{
-    constant::{self, Labels, ABSOLUTE, LABEL, MMIO_ADDRESS_SPACE, OPCODE_BYTES, RELATIVE},
+    constant::{self, ABSOLUTE, LABEL, MMIO_ADDRESS_SPACE, OPCODE_BYTES, RELATIVE},
     data::{
-        get_smallest_byte_size, AssemblyError, AssemblyErrorCode, InterType, Label, OpcodeTable,
-        RegisterTable,
+        get_smallest_byte_size, AssemblyError, AssemblyErrorCode, InterType, Label, Labels,
+        OpcodeTable, RegisterTable,
     },
     verbose_println, very_verbose_println, very_very_verbose_println,
 };
@@ -176,10 +176,7 @@ impl IntermediateObject {
         }
     }
 
-    fn resolve(
-        &mut self,
-        labels: &HashMap<String, constant::Register>,
-    ) -> Result<(), AssemblyError> {
+    fn resolve(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
         let label = if let Some(s) = &self.string {
             s
         } else {
@@ -188,15 +185,7 @@ impl IntermediateObject {
                 reason: format!("object {} already defined", self.object.unwrap()),
             });
         };
-        self.object = match labels.get(label) {
-            Some(r) => Some(*r as usize),
-            None => {
-                return Err(AssemblyError {
-                    code: AssemblyErrorCode::UndefinedLabel,
-                    reason: format!("label: [ {label} ] was not defined when needed"),
-                })
-            }
-        };
+        self.object = Some(labels.get_label(label)?.dereference()?);
         Ok(())
     }
     fn get_unresolved(&self) -> Result<String, AssemblyError> {
@@ -466,13 +455,13 @@ impl IntermediateProgram {
 
     pub fn collect_program_labels(
         &self,
-        clean_program_src: &Vec<String>,
+        clean_program_src: &[String],
     ) -> Result<Vec<Label>, AssemblyError> {
         let mut labels: Vec<Label> = vec![];
         let mut program_head = MMIO_ADDRESS_SPACE;
         // let mut line = 0;
-
-        for (i, line) in clean_program_src.iter().enumerate() {
+        let mut i = 0;
+        for line in clean_program_src {
             if line.trim().starts_with(LABEL) {
                 let mut label = Label::new(&line.trim()[1..]);
                 label.resolve(program_head);
@@ -490,6 +479,7 @@ impl IntermediateProgram {
                         })
                     }
                 };
+                i += 1;
 
                 // very_very_verbose_println!("advanced head by {instruction_size}");
                 program_head += instruction.get_size()?;
@@ -500,9 +490,9 @@ impl IntermediateProgram {
         }
         Ok(labels)
     }
-    pub fn resolve_immediates(&mut self, labels: Labels) -> Result<(), AssemblyError> {
+    pub fn resolve_immediates(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
         for instruction in &mut self.instructions {
-            instruction.resolve_imm(&labels)?;
+            instruction.resolve_imm(labels)?;
         }
         Ok(())
     }

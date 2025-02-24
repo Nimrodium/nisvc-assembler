@@ -62,13 +62,16 @@ fn write_binary(
     binary: Vec<u8>,
     program_length: u64,
     data_length: u64,
+    entry_point_address: u64,
 ) -> Result<(), AssemblyError> {
     let mut nisvc_ef_img: Vec<u8> = vec![];
     nisvc_ef_img.extend_from_slice(SIGNATURE);
     let data_length_bytes = data_length.to_le_bytes();
     let program_length_bytes = program_length.to_le_bytes();
+    let entry_point_bytes = entry_point_address.to_le_bytes();
     nisvc_ef_img.extend_from_slice(&program_length_bytes);
     nisvc_ef_img.extend_from_slice(&data_length_bytes);
+    nisvc_ef_img.extend_from_slice(&entry_point_bytes);
     nisvc_ef_img.extend(binary.as_slice());
     Ok(())
 }
@@ -183,8 +186,14 @@ fn main() {
         Err(err) => handle_fatal_assembly_err(err),
     };
 
+    //prepare entrypoint
+    let entry_point = match assembler.entry_point.as_ref().unwrap().dereference() {
+        Ok(address) => address,
+        Err(err) => handle_fatal_assembly_err(err),
+    } as u64;
+
     // write machine code to file
-    match write_binary(binary, program_length, data_length) {
+    match write_binary(binary, program_length, data_length, entry_point) {
         Ok(()) => (),
         Err(err) => handle_fatal_assembly_err(err),
     }
