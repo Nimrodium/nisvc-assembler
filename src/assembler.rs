@@ -50,7 +50,7 @@ impl Assembler {
         let (clean_data, clean_program, entry_point_label) = seperate_sections(&clean_src)?;
         if entry_point_label.is_some() {
             if self.entry_point.is_none() {
-                self.entry_point = Some(Label::new(&entry_point_label.unwrap()));
+                self.entry_point = Some(Label::new(&entry_point_label.unwrap(), false));
             } else {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::SyntaxError,
@@ -77,45 +77,54 @@ impl Assembler {
     }
     pub fn parse(&mut self) -> Result<(), AssemblyError> {
         // parse tokenized source and assemble into intermediate
-
-        // process data
         let mut data = Data::new();
         data.parse(&self.tokenized_raw_data_source)?;
-        self.data = Some(data); // placeholder
-
+        self.data = Some(data);
         // process program
         self.program = Some(parser::IntermediateProgram::parse_program(
             &self.tokenized_raw_program_source,
         )?);
+        // process data
+
         Ok(())
     }
 
     pub fn resolve(&mut self) -> Result<(), AssemblyError> {
         // resolve labels within source
-        self.program
-            .as_mut()
-            .unwrap()
-            .resolve_immediates(&self.labels)?;
+        // self.program
+        //     .as_mut()
+        //     .unwrap()
+        //     .resolve_immediates(&self.labels)?;
 
-        let program_labels = if let Some(program) = &self.program {
-            program.collect_program_labels(&self.tokenized_raw_program_source)?
+        let (program_labels, program_length) = if let Some(program) = &mut self.program {
+            program.resolve_immediates(&self.labels)?;
+
+            (
+                program.collect_program_labels(&self.tokenized_raw_program_source)?,
+                program.estimate_program_size()?,
+            )
         } else {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::UnexpectedError,
                 reason: "program not parsed".to_string(),
             });
         };
-        very_verbose_println!("program labels: {program_labels:?}");
-        for program_label in &program_labels {
-            self.labels.insert_label(program_label);
-        }
 
+        very_verbose_println!("program labels: {program_labels:?}");
+        self.labels.extend_from_labels_slice(&program_labels);
+        if let Some(data) = &mut self.data {
+            data.shift_addresses(program_length)?
+        } else {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::UnexpectedError,
+                reason: "data not parsed".to_string(),
+            });
+        }
         self.program
             .as_mut()
             .unwrap()
             .resolve_ram_addresses(&self.labels)?;
-
-        todo!()
+        Ok(())
     }
     pub fn package(&self) -> Result<(Vec<u8>, u64, u64), AssemblyError> {
         // generate machine code

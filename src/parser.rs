@@ -464,7 +464,7 @@ impl IntermediateProgram {
         let mut i = 0;
         for line in clean_program_src {
             if line.trim().starts_with(LABEL) {
-                let mut label = Label::new(&line.trim()[1..]);
+                let mut label = Label::new(&line.trim()[1..], false);
                 label.resolve(program_head);
                 very_verbose_println!("found program label {label}");
                 labels.push(label)
@@ -500,13 +500,13 @@ impl IntermediateProgram {
 
     /// called after intermediate resolution
     /// returns size in bytes
-    pub fn estimate_program_size(&mut self) -> Result<(), AssemblyError> {
+    pub fn estimate_program_size(&mut self) -> Result<usize, AssemblyError> {
         let mut size = 0;
         for instruction in &self.instructions {
             size += instruction.get_size()?;
         }
         self.size = Some(size);
-        Ok(())
+        Ok(size)
     }
     pub fn resolve_program_addresses(&mut self, labels: Labels) -> Result<(), AssemblyError> {
         for instruction in &mut self.instructions {
@@ -533,7 +533,7 @@ impl IntermediateProgram {
 pub struct Data {
     pub data_image: Vec<u8>,
     pub labels: Labels,
-    pub ram_base_address: usize,
+    // pub ram_base_address: usize,
     // length: usize,
 }
 enum EqOp {
@@ -579,13 +579,18 @@ impl Token {
 }
 impl Data {
     /// parse data structure.
-    pub fn new(ram_base_address: usize) -> Self {
+    pub fn new() -> Self {
         Self {
             data_image: vec![],
             labels: Labels::new(),
-            ram_base_address,
             // length: 0,
         }
+    }
+    pub fn shift_addresses(&mut self, ram_base_address: usize) -> Result<(), AssemblyError> {
+        for label in &mut self.labels.table {
+            label.1.shift(ram_base_address)?;
+        }
+        Ok(())
     }
     pub fn parse(&mut self, clean_src: &[String]) -> Result<(), AssemblyError> {
         for line in clean_src {
@@ -745,8 +750,9 @@ impl Data {
             });
         };
 
-        let mut label = Label::new(label_name);
-        label.resolve((self.data_image.len()) + self.ram_base_address);
+        let mut label = Label::new(label_name, false);
+        label.resolve((self.data_image.len()));
+        label.is_relative_to_ram_base = true;
         self.labels.insert_label(&label);
 
         let (keyword, instruction) = if let Some(s) = keyword_and_instruction.split_once(SPACE) {
@@ -771,7 +777,7 @@ impl Data {
             "res32" => self.reserve_bytes(instruction)?,
             "res64" => self.reserve_bytes(instruction)?,
 
-            "string" => self.define_string(instruction),
+            "string" => self.define_string(instruction)?,
 
             _ => {
                 return Err(AssemblyError {

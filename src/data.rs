@@ -37,7 +37,7 @@ pub enum InterType {
     Op,
 }
 pub struct Labels {
-    table: HashMap<String, Label>,
+    pub table: HashMap<String, Label>,
 }
 impl Labels {
     pub fn new() -> Self {
@@ -47,6 +47,11 @@ impl Labels {
     }
     pub fn insert_label(&mut self, label: &Label) {
         self.table.insert(label.name.clone(), label.clone());
+    }
+    pub fn extend_from_labels_slice(&mut self, slice: &[Label]) {
+        for label in slice {
+            self.insert_label(label);
+        }
     }
     pub fn get_label(&self, label: &str) -> Result<&Label, AssemblyError> {
         match self.table.get(label) {
@@ -62,6 +67,7 @@ impl Labels {
 pub struct Label {
     pub name: String,
     resolved: Option<usize>,
+    pub is_relative_to_ram_base: bool,
     // data_type: InterType,
     // size: usize,
 }
@@ -81,15 +87,17 @@ impl fmt::Debug for Label {
     }
 }
 impl Label {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, is_relative_to_ram_base: bool) -> Self {
         Self {
             name: name.to_string(),
             resolved: None,
+            is_relative_to_ram_base,
         }
     }
     pub fn resolve(&mut self, address: usize) {
         self.resolved = Some(address)
     }
+
     pub fn dereference(&self) -> Result<usize, AssemblyError> {
         match self.resolved {
             Some(address) => Ok(address),
@@ -101,6 +109,19 @@ impl Label {
                 ),
             }),
         }
+    }
+    pub fn shift(&mut self, offset: usize) -> Result<(), AssemblyError> {
+        self.resolved = if let Some(deref_addr) = self.resolved {
+            let relative = deref_addr + offset;
+            Some(relative)
+        } else {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::UnresolvedLabel,
+                reason: format!("attempted to shift unresolved label [ {} ]  ", self.name),
+            });
+        };
+
+        Ok(())
     }
 }
 // impl Label {
