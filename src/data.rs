@@ -157,6 +157,7 @@ pub enum AssemblyErrorCode {
     UnexpectedError,
     InvalidOpcodeDefinition,
     UnrecognizedOpcode,
+    UnrecognizedDataKeyword,
     IncorrectNumberOfOperands,
     ObjectAlreadyResolved,
     ObjectNotResolved,

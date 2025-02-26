@@ -1,16 +1,16 @@
 use std::{collections::HashMap, fmt};
 
 use crate::{
-    constant::{self, ABSOLUTE, LABEL, MMIO_ADDRESS_SPACE, OPCODE_BYTES, RELATIVE},
+    constant::{
+        self, ABSOLUTE, BINARY, COMMA, DEC, ESCAPE, HEX, LABEL, MAGIC_RESERVED_MEM,
+        MMIO_ADDRESS_SPACE, OPCODE_BYTES, RELATIVE, SPACE, STR,
+    },
     data::{
         get_smallest_byte_size, AssemblyError, AssemblyErrorCode, InterType, Label, Labels,
         OpcodeTable, RegisterTable,
     },
     verbose_println, very_verbose_println, very_very_verbose_println,
 };
-pub const HEX: char = 'x';
-pub const BINARY: char = 'b';
-pub const DEC: char = 'd';
 
 fn parse_value(
     immediate_str: &str,
@@ -334,7 +334,11 @@ impl IntermediateInstruction {
     fn resolve_imm(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
         for object in &mut self.objects {
             match object.intertype {
-                InterType::Imm => object.resolve(labels)?,
+                InterType::Imm => {
+                    if !object.is_resolved {
+                        object.resolve(labels)?
+                    }
+                }
                 _ => continue,
             }
         }
@@ -367,10 +371,7 @@ enum TokenizerState {
     InString,
     None,
 }
-const STR: char = '"';
-const ESCAPE: char = '\\';
-const SPACE: char = ' ';
-const COMMA: char = ',';
+
 fn tokenize_instruction(s: &str) -> Result<Vec<String>, AssemblyError> {
     let mut buf: Vec<String> = vec![];
 
@@ -513,7 +514,7 @@ impl IntermediateProgram {
         }
         Ok(())
     }
-    pub fn resolve_ram_addresses(&mut self, labels: Labels) -> Result<(), AssemblyError> {
+    pub fn resolve_ram_addresses(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
         for instruction in &mut self.instructions {
             instruction.resolve_relative_addr(&labels)?;
         }
@@ -529,10 +530,256 @@ impl IntermediateProgram {
     }
 }
 
-pub struct DataParser;
-impl DataParser {
-    fn parse() {
+pub struct Data {
+    pub data_image: Vec<u8>,
+    pub labels: Labels,
+    pub ram_base_address: usize,
+    // length: usize,
+}
+enum EqOp {
+    Add,
+    Sub,
+    Mult,
+    Div,
+    Mod,
+    Lpar,
+    Rpar,
+}
+enum Token {
+    Literal(usize),
+    Operation(char),
+}
+enum Unit {
+    B8,
+    B16,
+    B32,
+    B64,
+}
+// impl Unit {
+//     fn from(s: &str) -> Result<Self, AssemblyError> {
+//         match s {
+//             "d8" => Ok(Self::B8),
+//             "d16" => Ok(Self::B16),
+//             "d32" => Ok(Self::B32),
+//             "d64" => Ok(Self::B64),
+//             _ => Err(AssemblyError {
+//                 code: AssemblyErrorCode::SyntaxError,
+//                 reason: format!("{s} is not a defined unit"),
+//             }),
+//         }
+//     }
+// }
+impl Token {
+    fn get_internal(&self) -> (Option<usize>, Option<char>) {
+        match self {
+            Token::Literal(internal) => (Some(*internal), None),
+            Token::Operation(internal) => (None, Some(*internal)),
+        }
+    }
+}
+impl Data {
+    /// parse data structure.
+    pub fn new(ram_base_address: usize) -> Self {
+        Self {
+            data_image: vec![],
+            labels: Labels::new(),
+            ram_base_address,
+            // length: 0,
+        }
+    }
+    pub fn parse(&mut self, clean_src: &[String]) -> Result<(), AssemblyError> {
+        for line in clean_src {
+            self.parse_line(line)?;
+        }
+        Ok(())
+    }
+    fn define_string(&mut self, s: &str) -> Result<(), AssemblyError> {
+        let mut byte_buf: Vec<u8> = Vec::new();
+
+        let mut in_string = false;
+        let mut str_buf = String::new();
+        let mut byte_raw_buf = String::new();
+
+        for c in s.to_string().chars() {
+            match c {
+                STR => {
+                    if in_string {
+                        in_string = false;
+                        byte_buf.extend_from_slice(str_buf.as_bytes());
+                        str_buf.clear();
+                    } else {
+                        in_string = true
+                    }
+                }
+                SPACE | COMMA => {
+                    if in_string {
+                        // byte_buf.extend_from_slice(str_buf.as_bytes());
+                        str_buf.push(c);
+                    } else {
+                        let trimmed_byte_raw_buf = byte_raw_buf.trim();
+                        if !trimmed_byte_raw_buf.is_empty() {
+                            let literal_byte =
+                                self._define_string_resolve_byte(&trimmed_byte_raw_buf)?;
+                            byte_buf.push(literal_byte);
+                            byte_raw_buf.clear();
+                        }
+                    }
+                }
+                _ => {
+                    if in_string {
+                        str_buf.push(c);
+                    } else {
+                        byte_raw_buf.push(c);
+                    }
+                }
+            }
+        }
+        // clean up
+        if in_string {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::SyntaxError,
+                reason: format!("string never closed in {s}"),
+            });
+        }
+        if !byte_raw_buf.is_empty() {
+            let literal_byte = self._define_string_resolve_byte(&byte_raw_buf)?;
+            byte_buf.push(literal_byte)
+        }
+
+        self.data_image.extend_from_slice(&byte_buf);
+        Ok(())
+    }
+    /// reserve bytes
+    fn reserve_bytes(&mut self, bytes_str: &str) -> Result<(), AssemblyError> {
+        let bytes = match parse_value(bytes_str.trim())? {
+            (Some(literal), None, false) => literal,
+            _ => {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::SyntaxError,
+                    reason: format!("unsupported value in data"),
+                })
+            }
+        };
+        let byte_sequence = vec![MAGIC_RESERVED_MEM; bytes];
+        self.data_image.extend_from_slice(&byte_sequence);
+        Ok(())
+    }
+    /// parses and writes to image a sequence string
+    fn define_sequence(&self, unit: Unit, sequence: &str) -> Result<(), AssemblyError> {
         todo!()
     }
-    // fn
+    fn _define_string_resolve_byte(&self, byte_raw_buf: &str) -> Result<u8, AssemblyError> {
+        let literal_byte = match parse_value(byte_raw_buf)? {
+            (Some(literal), None, false) => literal,
+            _ => {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::InvalidImmediate,
+                    reason: format!("{byte_raw_buf} is an invalid state of parsed immediate"),
+                })
+            }
+        };
+        if literal_byte > u8::MAX as usize {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::InvalidImmediate,
+                reason: format!(
+                    "{literal_byte} is too big for inline byte definition in the string keyword"
+                ),
+            });
+        }
+        Ok(literal_byte as u8)
+    }
+    /// internal helper
+    fn _equate_resolve_str_buf(&self, string: &mut String) -> Result<usize, AssemblyError> {
+        let parsed_value = parse_value(&string)?;
+        if parsed_value.2 {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::InvalidImmediate,
+                reason: format!("{string} is a relative immediate, which is not supported in data"),
+            });
+        }
+        let literal = match parsed_value {
+            (None, Some(label), false) => self.labels.get_label(&label)?.dereference()?,
+            (Some(literal), None, false) => literal,
+            _ => {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::InvalidImmediate,
+                    reason: format!("{parsed_value:?} is an invalid state of parsed immediate"),
+                })
+            }
+        };
+        Ok(literal)
+    }
+
+    /// equate a data expression
+    /// kinda sucks ass
+    fn equate(&self, expr: &str) -> Result<usize, AssemblyError> {
+        // let mut intermediate_eq: Vec<(usize, EqOp, usize)> = Vec::new();
+        let mut intermediate_eq: Vec<Token> = vec![];
+        let operations = ['+', '-', '*', '/', '%', ' ', '(', ')'];
+        let mut string = String::new();
+
+        for char_token in expr.to_string().chars() {
+            match char_token {
+                c if operations.contains(&c) => {
+                    let literal = self._equate_resolve_str_buf(&mut string)?;
+                    intermediate_eq.push(Token::Literal(literal));
+                    intermediate_eq.push(Token::Operation(c));
+                    very_very_verbose_println!("pushed {literal} {c}")
+                }
+                _ => string.push(char_token),
+            }
+        }
+        // nothing more to process
+        let literal = self._equate_resolve_str_buf(&mut string)?;
+        intermediate_eq.push(Token::Literal(literal));
+        todo!()
+    }
+
+    fn parse_line(&mut self, line: &str) -> Result<(), AssemblyError> {
+        let (label_name, keyword_and_instruction) = if let Some(s) = line.split_once(SPACE) {
+            s
+        } else {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::SyntaxError,
+                reason: format!("could not find label in {line}"),
+            });
+        };
+
+        let mut label = Label::new(label_name);
+        label.resolve((self.data_image.len()) + self.ram_base_address);
+        self.labels.insert_label(&label);
+
+        let (keyword, instruction) = if let Some(s) = keyword_and_instruction.split_once(SPACE) {
+            s
+        } else {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::SyntaxError,
+                reason: format!("could not find keyword in {keyword_and_instruction}"),
+            });
+        };
+        match keyword {
+            // "d8" | "d16" | "d32" | "d64" => {
+            //     self.define_sequence(Unit::from(keyword)?, instruction)?
+            // }
+            "d8" => self.define_sequence(Unit::B8, instruction)?,
+            "d16" => self.define_sequence(Unit::B16, instruction)?,
+            "d32" => self.define_sequence(Unit::B32, instruction)?,
+            "d64" => self.define_sequence(Unit::B64, instruction)?,
+
+            "res8" => self.reserve_bytes(instruction)?,
+            "res16" => self.reserve_bytes(instruction)?,
+            "res32" => self.reserve_bytes(instruction)?,
+            "res64" => self.reserve_bytes(instruction)?,
+
+            "string" => self.define_string(instruction),
+
+            _ => {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::UnrecognizedDataKeyword,
+                    reason: format!("{keyword} is not a valid keyword"),
+                })
+            }
+        };
+        Ok(())
+    }
 }

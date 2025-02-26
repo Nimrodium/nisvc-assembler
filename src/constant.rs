@@ -16,3 +16,22 @@ pub const SEPERATOR: char = ';';
 pub const COMMENT: &str = "//";
 pub const OPEN_SECTION: char = '{';
 pub const CLOSE_SECTION: char = '}';
+
+pub const STR: char = '"';
+pub const ESCAPE: char = '\\';
+pub const SPACE: char = ' ';
+pub const COMMA: char = ',';
+
+pub const HEX: char = 'x';
+pub const BINARY: char = 'b';
+pub const DEC: char = 'd';
+
+pub const ADD: char = '+';
+pub const SUB: char = '-';
+pub const MULT: char = '*';
+pub const DIV: char = '/';
+pub const MOD: char = '%';
+pub const LPAR: char = '(';
+pub const RPAR: char = ')';
+
+pub const MAGIC_RESERVED_MEM: u8 = 0xea;

@@ -3,7 +3,7 @@ use std::{fs::File, io::Read};
 use crate::{
     constant::{COMMENT, SEPERATOR},
     data::{AssemblyError, AssemblyErrorCode, Label, Labels},
-    parser::{self, IntermediateProgram, DEC},
+    parser::{self, Data, IntermediateProgram},
     verbose_println, very_verbose_println, very_very_verbose_println,
 };
 
@@ -11,7 +11,7 @@ pub struct Assembler {
     tokenized_raw_data_source: Vec<String>,
     tokenized_raw_program_source: Vec<String>,
     program: Option<IntermediateProgram>,
-    data: Option<u8>, // placeholder
+    data: Option<Data>,
     labels: Labels,
     pub entry_point: Option<Label>,
 }
@@ -79,7 +79,9 @@ impl Assembler {
         // parse tokenized source and assemble into intermediate
 
         // process data
-        self.data = Some(0); // placeholder
+        let mut data = Data::new();
+        data.parse(&self.tokenized_raw_data_source)?;
+        self.data = Some(data); // placeholder
 
         // process program
         self.program = Some(parser::IntermediateProgram::parse_program(
@@ -93,7 +95,7 @@ impl Assembler {
         self.program
             .as_mut()
             .unwrap()
-            .resolve_immediates(&self.labels);
+            .resolve_immediates(&self.labels)?;
 
         let program_labels = if let Some(program) = &self.program {
             program.collect_program_labels(&self.tokenized_raw_program_source)?
@@ -107,6 +109,11 @@ impl Assembler {
         for program_label in &program_labels {
             self.labels.insert_label(program_label);
         }
+
+        self.program
+            .as_mut()
+            .unwrap()
+            .resolve_ram_addresses(&self.labels)?;
 
         todo!()
     }
