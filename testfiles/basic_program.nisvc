@@ -9,3 +9,5 @@
 
     duplicate dup 8 $10:$xfe
 .program;
+    movim o1, !hello_world // o1 = pointer to start of string
+    movim o2, !hello_world_len // o2 = length of string

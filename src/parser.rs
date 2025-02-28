@@ -801,16 +801,17 @@ impl Data {
         for char_token in expr.chars() {
             if operations.contains(&char_token) {
                 if !token_buf.trim().is_empty() {
-                    let resolved_literal = match char_token {
-
-                        ASSEMBLY_PTR => self.data_image.len(),
-
-                        _ => match parse_value(&token_buf.trim())?{
+                    let resolved_literal = if token_buf.trim() == ASSEMBLY_PTR.to_string().as_str()
+                    {
+                        self.data_image.len()
+                    } else {
+                        match parse_value(&token_buf.trim())?{
 
                             (Some(literal),None,false) => literal,
                             (None,Some(label),false) => self.labels.get_label(&label)?.dereference()?,
                             (_,_,true) => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("{expr} contains a relative ({RELATIVE}) literal which is not supported in {DATA_MARKER}")}),
                             _ => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("illegal state entered when attempting to parse {expr}")})
+
                         }
                     };
                     token_buf.clear();
