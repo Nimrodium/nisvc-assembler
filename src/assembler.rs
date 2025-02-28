@@ -1,8 +1,8 @@
 use std::{fs::File, io::Read};
 
 use crate::{
-    constant::{COMMENT, SEPERATOR},
-    data::{AssemblyError, AssemblyErrorCode, Label, Labels},
+    constant::{COMMENT, DATA_MARKER, ENTRY_MARKER, PROGRAM_MARKER, SEPERATOR},
+    data::{AssemblyError, AssemblyErrorCode, Label, LabelLocation, Labels},
     parser::{self, Data, IntermediateProgram},
     verbose_println, very_verbose_println, very_very_verbose_println,
 };
@@ -50,7 +50,10 @@ impl Assembler {
         let (clean_data, clean_program, entry_point_label) = seperate_sections(&clean_src)?;
         if entry_point_label.is_some() {
             if self.entry_point.is_none() {
-                self.entry_point = Some(Label::new(&entry_point_label.unwrap(), false));
+                self.entry_point = Some(Label::new(
+                    &entry_point_label.unwrap(),
+                    LabelLocation::Program,
+                ));
             } else {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::SyntaxError,
@@ -91,11 +94,6 @@ impl Assembler {
 
     pub fn resolve(&mut self) -> Result<(), AssemblyError> {
         // resolve labels within source
-        // self.program
-        //     .as_mut()
-        //     .unwrap()
-        //     .resolve_immediates(&self.labels)?;
-
         let (program_labels, program_length) = if let Some(program) = &mut self.program {
             program.resolve_immediates(&self.labels)?;
 
@@ -124,6 +122,26 @@ impl Assembler {
             .as_mut()
             .unwrap()
             .resolve_ram_addresses(&self.labels)?;
+
+        Ok(())
+    }
+    /// attempts to look up the entry point in the label table and resolves it,
+    /// errors if label is not in program or unresolved
+    pub fn resolve_entry_point(&mut self) -> Result<(), AssemblyError> {
+        let label = self
+            .labels
+            .get_label(&self.entry_point.as_ref().unwrap().name)?;
+        if !label.is_in(LabelLocation::Program) {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::InvalidEntryPoint,
+                reason: format!("{} is not a valid entry point label, label was found but in an invalid location [ {:?} ]", self.entry_point.as_ref().unwrap(),label.label_location),
+            });
+        } else {
+            self.entry_point
+                .as_mut()
+                .unwrap()
+                .resolve(label.dereference()?);
+        }
         Ok(())
     }
     pub fn package(&self) -> Result<(Vec<u8>, u64, u64), AssemblyError> {
@@ -160,10 +178,6 @@ fn clean_source(source: &str) -> Vec<String> {
     clean_buf
 }
 
-const DATA_MARKER: &str = ".data";
-const PROGRAM_MARKER: &str = ".program";
-const ENTRY_MAKER: &str = ".entry";
-
 enum Section {
     Data,
     Program,
@@ -181,7 +195,7 @@ fn seperate_sections(
         match token.as_str() {
             DATA_MARKER => section = Section::Data,
             PROGRAM_MARKER => section = Section::Program,
-            ENTRY_MAKER => section = Section::Entry,
+            ENTRY_MARKER => section = Section::Entry,
             t if t.starts_with(".") => {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::SyntaxError,

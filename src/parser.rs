@@ -1,17 +1,19 @@
-use std::{collections::HashMap, fmt};
+use meval;
+use std::fmt;
 
 use crate::{
     constant::{
-        self, ABSOLUTE, BINARY, COMMA, DEC, ESCAPE, HEX, LABEL, MAGIC_RESERVED_MEM,
-        MMIO_ADDRESS_SPACE, OPCODE_BYTES, RELATIVE, SPACE, STR,
+        self, ABSOLUTE, ASSEMBLY_PTR, BINARY, COMMA, DATA_MARKER, DEC, DUP_SEPERATOR, ESCAPE, HEX,
+        LABEL, MAGIC_RESERVED_MEM, MMIO_ADDRESS_SPACE, OPCODE_BYTES, RELATIVE, SEPERATOR, SPACE,
+        STR,
     },
     data::{
-        get_smallest_byte_size, AssemblyError, AssemblyErrorCode, InterType, Label, Labels,
-        OpcodeTable, RegisterTable,
+        get_smallest_byte_size, AssemblyError, AssemblyErrorCode, InterType, Label, LabelLocation,
+        Labels, OpcodeTable, RegisterTable,
     },
     verbose_println, very_verbose_println, very_very_verbose_println,
 };
-
+/// returns (resolved,label,is_relative)
 fn parse_value(
     immediate_str: &str,
 ) -> Result<(Option<usize>, Option<String>, bool), AssemblyError> {
@@ -464,7 +466,7 @@ impl IntermediateProgram {
         let mut i = 0;
         for line in clean_program_src {
             if line.trim().starts_with(LABEL) {
-                let mut label = Label::new(&line.trim()[1..], false);
+                let mut label = Label::new(&line.trim()[1..], LabelLocation::Ram);
                 label.resolve(program_head);
                 very_verbose_println!("found program label {label}");
                 labels.push(label)
@@ -536,47 +538,39 @@ pub struct Data {
     // pub ram_base_address: usize,
     // length: usize,
 }
-enum EqOp {
-    Add,
-    Sub,
-    Mult,
-    Div,
-    Mod,
-    Lpar,
-    Rpar,
-}
-enum Token {
-    Literal(usize),
-    Operation(char),
-}
+
 enum Unit {
     B8,
     B16,
     B32,
     B64,
 }
-// impl Unit {
-//     fn from(s: &str) -> Result<Self, AssemblyError> {
-//         match s {
-//             "d8" => Ok(Self::B8),
-//             "d16" => Ok(Self::B16),
-//             "d32" => Ok(Self::B32),
-//             "d64" => Ok(Self::B64),
-//             _ => Err(AssemblyError {
-//                 code: AssemblyErrorCode::SyntaxError,
-//                 reason: format!("{s} is not a defined unit"),
-//             }),
-//         }
-//     }
-// }
-impl Token {
-    fn get_internal(&self) -> (Option<usize>, Option<char>) {
-        match self {
-            Token::Literal(internal) => (Some(*internal), None),
-            Token::Operation(internal) => (None, Some(*internal)),
+impl Unit {
+    fn from_size_str(bit_count: &str) -> Result<Self, AssemblyError> {
+        match bit_count {
+            "8" => Ok(Self::B8),
+            "16" => Ok(Self::B16),
+            "32" => Ok(Self::B32),
+            "64" => Ok(Self::B64),
+            _ => Err(AssemblyError {
+                code: AssemblyErrorCode::SyntaxError,
+                reason: format!("{bit_count} is not a valid word size"),
+            }),
         }
     }
+    fn bits(&self) -> usize {
+        match self {
+            Unit::B8 => 8,
+            Unit::B16 => 16,
+            Unit::B32 => 32,
+            Unit::B64 => 64,
+        }
+    }
+    fn bytes(&self) -> usize {
+        self.bits() / 8
+    }
 }
+
 impl Data {
     /// parse data structure.
     pub fn new() -> Self {
@@ -593,9 +587,89 @@ impl Data {
         Ok(())
     }
     pub fn parse(&mut self, clean_src: &[String]) -> Result<(), AssemblyError> {
+        verbose_println!("--- PARSE DATA START --");
         for line in clean_src {
             self.parse_line(line)?;
         }
+        verbose_println!("data image : {:?}", self.data_image);
+        verbose_println!("--- PARSE DATA END --");
+        Ok(())
+    }
+    fn parse_line(&mut self, line: &str) -> Result<(), AssemblyError> {
+        let (label_name, keyword_and_instruction) = if let Some(s) = line.split_once(SPACE) {
+            s
+        } else {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::SyntaxError,
+                reason: format!("could not find label in {line}"),
+            });
+        };
+        if label_name != "_" {
+            let mut label = Label::new(label_name, LabelLocation::Ram);
+            label.resolve(self.data_image.len());
+            // label.is_relative_to_ram_base = true;
+            self.labels.insert_label(&label);
+        }
+        let (keyword, instruction) = if let Some(s) = keyword_and_instruction.split_once(SPACE) {
+            s
+        } else {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::SyntaxError,
+                reason: format!("could not find keyword in {keyword_and_instruction}"),
+            });
+        };
+
+        match keyword {
+            "def" => {
+                let (unit, sequence) = Data::_get_unit_and_rest(instruction)?;
+                self.define_sequence(unit, sequence)?
+            }
+            "res" => {
+                let (unit, rest) = Data::_get_unit_and_rest(instruction)?;
+                self.reserve_bytes(unit, rest)?
+            }
+            "equ" => {
+                let immediate = self.equate(instruction)?;
+                let label = self.labels.get_mut_label(label_name)?;
+                label.resolve(immediate);
+                very_verbose_println!("defined alias [ {label} ] from {instruction}")
+            }
+            "str" => self.define_string(instruction)?,
+            "dup" => {
+                let (unit, rest) = Data::_get_unit_and_rest(instruction)?;
+                let (count_expr, value_expr) = match rest.split_once(DUP_SEPERATOR) {
+                    Some(result) => result,
+                    None => {
+                        return Err(AssemblyError {
+                            code: AssemblyErrorCode::SyntaxError,
+                            reason: format!("syntax error in {rest} :: failed to split"),
+                        })
+                    }
+                };
+                self.duplicate(unit, count_expr, value_expr)?
+            }
+            _ => {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::UnrecognizedDataKeyword,
+                    reason: format!("{keyword} is not a valid keyword"),
+                })
+            }
+        };
+        Ok(())
+    }
+    fn duplicate(
+        &mut self,
+        unit: Unit,
+        count_expr: &str,
+        value_expr: &str,
+    ) -> Result<(), AssemblyError> {
+        let value = &self.equate(value_expr)?;
+        let bytes_to_duplicate = &value.to_le_bytes()[0..unit.bytes()];
+        let count = self.equate(count_expr)?;
+        for _ in 0..=count {
+            self.data_image.extend_from_slice(bytes_to_duplicate);
+        }
+        verbose_println!("duplicated {value} of unit {} {count} times ", unit.bits());
         Ok(())
     }
     fn define_string(&mut self, s: &str) -> Result<(), AssemblyError> {
@@ -650,12 +724,15 @@ impl Data {
             let literal_byte = self._define_string_resolve_byte(&byte_raw_buf)?;
             byte_buf.push(literal_byte)
         }
-
+        verbose_println!(
+            "defined string {s} -> {byte_buf:?} length {}",
+            byte_buf.len()
+        );
         self.data_image.extend_from_slice(&byte_buf);
         Ok(())
     }
     /// reserve bytes
-    fn reserve_bytes(&mut self, bytes_str: &str) -> Result<(), AssemblyError> {
+    fn reserve_bytes(&mut self, unit: Unit, bytes_str: &str) -> Result<(), AssemblyError> {
         let bytes = match parse_value(bytes_str.trim())? {
             (Some(literal), None, false) => literal,
             _ => {
@@ -665,13 +742,34 @@ impl Data {
                 })
             }
         };
-        let byte_sequence = vec![MAGIC_RESERVED_MEM; bytes];
+        let byte_sequence = vec![MAGIC_RESERVED_MEM; bytes * (unit.bytes())];
         self.data_image.extend_from_slice(&byte_sequence);
+        verbose_println!(
+            "reserved {bytes} bytes of unit {} :: {byte_sequence:x?}",
+            unit.bits(),
+        );
         Ok(())
     }
     /// parses and writes to image a sequence string
-    fn define_sequence(&self, unit: Unit, sequence: &str) -> Result<(), AssemblyError> {
-        todo!()
+    fn define_sequence(&mut self, unit: Unit, sequence: &str) -> Result<(), AssemblyError> {
+        let mut byte_buf: Vec<u8> = vec![];
+        let split_sequence = sequence.split([SPACE, COMMA]);
+        for token in split_sequence {
+            let resolved_token_literal = match parse_value(token)? {
+                (Some(u), None, false) => u,
+                (None, Some(label), false) => self.labels.get_label(&label)?.dereference()?,
+                _ => unreachable!(),
+            };
+            let literal_bytes = &resolved_token_literal.to_le_bytes()[0..unit.bytes()];
+            byte_buf.extend_from_slice(literal_bytes);
+        }
+        self.data_image.extend_from_slice(&byte_buf);
+        verbose_println!(
+            "defined sequence of unit {} [ {sequence} ] ->  [ {byte_buf:?} ]",
+            unit.bits()
+        );
+
+        Ok(())
     }
     fn _define_string_resolve_byte(&self, byte_raw_buf: &str) -> Result<u8, AssemblyError> {
         let literal_byte = match parse_value(byte_raw_buf)? {
@@ -693,6 +791,59 @@ impl Data {
         }
         Ok(literal_byte as u8)
     }
+
+    /// equate a data expression
+    /// kinda sucks ass
+    fn equate(&self, expr: &str) -> Result<usize, AssemblyError> {
+        let mut resolved_expr = String::new();
+        let mut token_buf = String::new();
+        let operations = ['+', '-', '*', '/', '%', ' ', '(', ')'];
+        for char_token in expr.chars() {
+            if operations.contains(&char_token) {
+                if !token_buf.trim().is_empty() {
+                    let resolved_literal = match char_token {
+
+                        ASSEMBLY_PTR => self.data_image.len(),
+
+                        _ => match parse_value(&token_buf.trim())?{
+
+                            (Some(literal),None,false) => literal,
+                            (None,Some(label),false) => self.labels.get_label(&label)?.dereference()?,
+                            (_,_,true) => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("{expr} contains a relative ({RELATIVE}) literal which is not supported in {DATA_MARKER}")}),
+                            _ => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("illegal state entered when attempting to parse {expr}")})
+                        }
+                    };
+                    token_buf.clear();
+                    resolved_expr.push_str(&resolved_literal.to_string());
+                }
+                resolved_expr.push(char_token);
+            } else {
+                token_buf.push(char_token);
+            }
+        }
+        // cleanup
+        if !token_buf.is_empty() {
+            let resolved_literal = match parse_value(&token_buf)?{
+                (Some(literal),None,false) => literal,
+                (None,Some(label),false) => self.labels.get_label(&label)?.dereference()?,
+                (_,_,true) => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("{expr} contains a relative ({RELATIVE}) literal which is not supported in {DATA_MARKER}")}),
+                _ => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("illegal state entered when attempting to parse {expr}")})
+            };
+            resolved_expr.push_str(&resolved_literal.to_string());
+        }
+        let result = match meval::eval_str(&resolved_expr) {
+            Ok(r) => r,
+            Err(err) => {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::SyntaxError,
+                    reason: format!("failed to parse expression {expr}: {err}"),
+                })
+            }
+        } as usize;
+        verbose_println!("resolved {expr} -> {resolved_expr} -> {result} ");
+        Ok(result)
+    }
+
     /// internal helper
     fn _equate_resolve_str_buf(&self, string: &mut String) -> Result<usize, AssemblyError> {
         let parsed_value = parse_value(&string)?;
@@ -714,78 +865,16 @@ impl Data {
         };
         Ok(literal)
     }
-
-    /// equate a data expression
-    /// kinda sucks ass
-    fn equate(&self, expr: &str) -> Result<usize, AssemblyError> {
-        // let mut intermediate_eq: Vec<(usize, EqOp, usize)> = Vec::new();
-        let mut intermediate_eq: Vec<Token> = vec![];
-        let operations = ['+', '-', '*', '/', '%', ' ', '(', ')'];
-        let mut string = String::new();
-
-        for char_token in expr.to_string().chars() {
-            match char_token {
-                c if operations.contains(&c) => {
-                    let literal = self._equate_resolve_str_buf(&mut string)?;
-                    intermediate_eq.push(Token::Literal(literal));
-                    intermediate_eq.push(Token::Operation(c));
-                    very_very_verbose_println!("pushed {literal} {c}")
-                }
-                _ => string.push(char_token),
-            }
-        }
-        // nothing more to process
-        let literal = self._equate_resolve_str_buf(&mut string)?;
-        intermediate_eq.push(Token::Literal(literal));
-        todo!()
-    }
-
-    fn parse_line(&mut self, line: &str) -> Result<(), AssemblyError> {
-        let (label_name, keyword_and_instruction) = if let Some(s) = line.split_once(SPACE) {
-            s
-        } else {
-            return Err(AssemblyError {
-                code: AssemblyErrorCode::SyntaxError,
-                reason: format!("could not find label in {line}"),
-            });
-        };
-
-        let mut label = Label::new(label_name, false);
-        label.resolve((self.data_image.len()));
-        label.is_relative_to_ram_base = true;
-        self.labels.insert_label(&label);
-
-        let (keyword, instruction) = if let Some(s) = keyword_and_instruction.split_once(SPACE) {
-            s
-        } else {
-            return Err(AssemblyError {
-                code: AssemblyErrorCode::SyntaxError,
-                reason: format!("could not find keyword in {keyword_and_instruction}"),
-            });
-        };
-        match keyword {
-            // "d8" | "d16" | "d32" | "d64" => {
-            //     self.define_sequence(Unit::from(keyword)?, instruction)?
-            // }
-            "d8" => self.define_sequence(Unit::B8, instruction)?,
-            "d16" => self.define_sequence(Unit::B16, instruction)?,
-            "d32" => self.define_sequence(Unit::B32, instruction)?,
-            "d64" => self.define_sequence(Unit::B64, instruction)?,
-
-            "res8" => self.reserve_bytes(instruction)?,
-            "res16" => self.reserve_bytes(instruction)?,
-            "res32" => self.reserve_bytes(instruction)?,
-            "res64" => self.reserve_bytes(instruction)?,
-
-            "string" => self.define_string(instruction)?,
-
-            _ => {
+    fn _get_unit_and_rest(instruction: &str) -> Result<(Unit, &str), AssemblyError> {
+        let unit_sequence = match instruction.split_once(SPACE) {
+            Some((unit, rest)) => (Unit::from_size_str(unit)?, rest),
+            None => {
                 return Err(AssemblyError {
-                    code: AssemblyErrorCode::UnrecognizedDataKeyword,
-                    reason: format!("{keyword} is not a valid keyword"),
+                    code: AssemblyErrorCode::SyntaxError,
+                    reason: format!("missing unit (8/16/32/64)"),
                 })
             }
         };
-        Ok(())
+        Ok(unit_sequence)
     }
 }

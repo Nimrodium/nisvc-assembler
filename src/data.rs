@@ -1,11 +1,7 @@
-use crate::{
-    constant::{self, Register, ADDRESS_BYTES},
-    parser::IntermediateProgram,
-};
+use crate::constant::{self, Register};
 use colorize::AnsiColor;
 use constant::NAME;
-use std::{collections::HashMap, fmt, ops::Add};
-
+use std::{collections::HashMap, fmt};
 pub fn get_smallest_byte_size(integer: usize) -> Result<usize, AssemblyError> {
     if integer > Register::MAX as usize {
         return Err(AssemblyError {
@@ -62,14 +58,29 @@ impl Labels {
             }),
         }
     }
+    pub fn get_mut_label(&mut self, label: &str) -> Result<&mut Label, AssemblyError> {
+        match self.table.get_mut(label) {
+            Some(lbl) => Ok(lbl),
+            None => Err(AssemblyError {
+                code: AssemblyErrorCode::UndefinedLabel,
+                reason: format!("label [ {label} ] was not found in the label table"),
+            }),
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq)]
+pub enum LabelLocation {
+    Program,
+    Ram,
+    Immediate,
 }
 #[derive(Clone)]
 pub struct Label {
     pub name: String,
     resolved: Option<usize>,
-    pub is_relative_to_ram_base: bool,
-    // data_type: InterType,
-    // size: usize,
+    // pub is_relative_to_ram_base: bool,
+    pub label_location: LabelLocation, // data_type: InterType,
+                                       // size: usize,
 }
 impl fmt::Display for Label {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -87,11 +98,19 @@ impl fmt::Debug for Label {
     }
 }
 impl Label {
-    pub fn new(name: &str, is_relative_to_ram_base: bool) -> Self {
+    pub fn is_in(&self, location: LabelLocation) -> bool {
+        if location == self.label_location {
+            true
+        } else {
+            false
+        }
+    }
+    pub fn new(name: &str, location: LabelLocation) -> Self {
         Self {
             name: name.to_string(),
             resolved: None,
-            is_relative_to_ram_base,
+            // is_relative_to_ram_base: false,
+            label_location: location,
         }
     }
     pub fn resolve(&mut self, address: usize) {
@@ -124,55 +143,7 @@ impl Label {
         Ok(())
     }
 }
-// impl Label {
-//     pub fn new_addr(name: &str) -> Self {
-//         // let size = match data_type {
-//         // InterType::Reg => constant::REGISTER_BYTES,
-//         // InterType::Addr => constant::ADDRESS_BYTES,
-//         // InterType::Imm => {
-//         //     return Err(AssemblyError {
-//         //         code: AssemblyErrorCode::LiteralDefinedAsAddress,
-//         //         reason: format!("attempted to build immediate label [ {name} ] as address"),
-//         //     })
-//         // }
-//         // InterType::Op => {
-//         //     return Err(AssemblyError {
-//         //         code: AssemblyErrorCode::UnexpectedError,
-//         //         reason: format!("attempted to create label with opcode data type"),
-//         //     })
-//         // }
-//         // };
 
-//         Self {
-//             name: name.to_string(),
-//             data_type: InterType::Addr,
-//             resolved: None,
-//             // size: ADDRESS_BYTES,
-//         }
-//     }
-//     pub fn new_imm(name: &str, literal: constant::Register) -> Result<Self, AssemblyError> {
-//         let size = get_smallest_byte_size(literal as usize)?;
-//         Ok(Self {
-//             name: name.to_string(),
-//             resolved: Some(literal as usize),
-//             // size,
-//             // data_type: InterType::Imm,
-//         })
-//     }
-//     /// resolves addresses
-//     /// - returns bytes to move head
-//     /// - returns ObjectAlreadyResolved if resolved contains a value
-//     pub fn resolve_addr(&mut self, memory_head: usize) -> Result<usize, AssemblyError> {
-//         if let Some(data) = self.resolved {
-//             return Err(AssemblyError {
-//                 code: AssemblyErrorCode::ObjectAlreadyResolved,
-//                 reason: format!("label {} already resolved to {}", self.name, data),
-//             });
-//         }
-//         self.resolved = Some(memory_head);
-//         Ok(self.size)
-//     }
-// }
 #[derive(Debug)]
 pub enum AssemblyErrorCode {
     UnexpectedError,
@@ -194,6 +165,7 @@ pub enum AssemblyErrorCode {
     SourceFileInitializationError,
     SyntaxError,
     UnresolvedLabel,
+    InvalidEntryPoint,
 }
 
 pub struct AssemblyError {

@@ -1,11 +1,11 @@
 .data;
-    louis equ $1
+    alias1 equ $10
+    alias2 equ $1*($!alias1+$b01)
+
+    reserved res 8 $2
+    defined def 16 $1,$xff,$1
+    hello_world str "hello world",$x0a
+    hello_world_len equ . - $!hello_world
+
+    duplicate dup 8 $10:$xfe
 .program;
-    !label
-    movim r1,$x12
-    !label2
-    movim r3,@43
-    !label3
-    mov r2,r1;
-    !label4
-    movim r1,$59

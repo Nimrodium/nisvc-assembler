@@ -1,9 +1,8 @@
-use std::{alloc::handle_alloc_error, fmt::format, process::exit};
-
 use assembler::Assembler;
 use colorize::AnsiColor;
 use constant::{DEFAULT_BINARY_NAME, NAME, SIGNATURE};
 use data::{AssemblyError, AssemblyErrorCode};
+use std::process::exit;
 
 mod assembler;
 mod constant;
@@ -163,7 +162,7 @@ fn main() {
     }
     match assembler.is_entry_point_located() {
         Ok(()) => verbose_println!(
-            "entry point label located [ {} ]",
+            "entry point label defined [ {} ]",
             assembler.entry_point.as_ref().unwrap().name
         ),
         Err(err) => handle_fatal_assembly_err(err),
@@ -179,7 +178,10 @@ fn main() {
         Ok(()) => (),
         Err(err) => handle_fatal_assembly_err(err),
     }
-
+    match assembler.resolve_entry_point() {
+        Ok(()) => (),
+        Err(err) => handle_fatal_assembly_err(err),
+    };
     // generate nisvc machine code
     let (binary, program_length, data_length) = match assembler.package() {
         Ok(i) => i,
