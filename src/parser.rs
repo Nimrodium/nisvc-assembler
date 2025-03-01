@@ -8,8 +8,8 @@ use crate::{
         STR,
     },
     data::{
-        get_smallest_byte_size, AssemblyError, AssemblyErrorCode, InterType, Label, LabelLocation,
-        Labels, OpcodeTable, RegisterTable,
+        get_smallest_byte_size, AssemblyError, AssemblyErrorCode, DebugPartition, InterType, Label,
+        LabelLocation, Labels, MetaData, OpcodeTable, RegisterTable,
     },
     verbose_println, very_verbose_println, very_very_verbose_println,
 };
@@ -24,6 +24,7 @@ fn parse_value(
             return Err(AssemblyError {
                 code: AssemblyErrorCode::InvalidImmediate,
                 reason: format!("invalid immediate [ {immediate_str} ]"),
+                metadata: None,
             })
         }
     };
@@ -34,6 +35,7 @@ fn parse_value(
             return Err(AssemblyError {
                 code: AssemblyErrorCode::InvalidImmediate,
                 reason: format!("literal [ {immediate_str} ] is empty."),
+                metadata: None,
             })
         }
     };
@@ -47,6 +49,7 @@ fn parse_value(
                     reason: format!(
                         "[ {immediate_str} ] is an invalid binary literal :: [ {err} ]"
                     ),
+                    metadata: None,
                 })
             }
         },
@@ -56,6 +59,7 @@ fn parse_value(
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::InvalidImmediate,
                     reason: format!("[ {immediate_str} ] is an invalid hex literal :: [ {err} ]"),
+                    metadata: None,
                 })
             }
         },
@@ -67,6 +71,7 @@ fn parse_value(
                     reason: format!(
                         "[ {immediate_str} ] is an invalid decimal literal :: [ {err} ]"
                     ),
+                    metadata: None,
                 })
             }
         },
@@ -80,6 +85,7 @@ fn parse_value(
                     reason: format!(
                         "[ {immediate_str} ] is an invalid decimal literal :: [ {err} ]"
                     ),
+                    metadata: None,
                 })
             }
         },
@@ -89,23 +95,24 @@ fn parse_value(
                 reason: format!(
                     " [ {prefix} ] in [ {immediate_str} ] is not a recognized symbol or digit"
                 ),
+                metadata: None,
             })
         }
     };
     // catch invalid states
     if parsed_value.0.is_some() {
         if !parsed_value.1.is_none() {
-            return Err(AssemblyError{code  : AssemblyErrorCode::UnexpectedError,reason:format!("assembler caught invalid return state from parse_value function [ {parsed_value:?} ] ")});
+            return Err(AssemblyError{code  : AssemblyErrorCode::UnexpectedError,reason:format!("assembler caught invalid return state from parse_value function [ {parsed_value:?} ] "),metadata:None,});
         }
     }
     if parsed_value.1.is_some() {
         if !parsed_value.0.is_none() {
-            return Err(AssemblyError{code  : AssemblyErrorCode::UnexpectedError,reason:format!("assembler caught invalid return state from parse_value function [ {parsed_value:?} ] ")});
+            return Err(AssemblyError{code  : AssemblyErrorCode::UnexpectedError,reason:format!("assembler caught invalid return state from parse_value function [ {parsed_value:?} ] "),metadata:None,});
         }
     }
     Ok((parsed_value.0, parsed_value.1, is_relative))
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct IntermediateObject {
     intertype: InterType,
     object: Option<usize>,
@@ -185,9 +192,14 @@ impl IntermediateObject {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::ObjectAlreadyResolved,
                 reason: format!("object {} already defined", self.object.unwrap()),
+                metadata: None,
             });
         };
-        self.object = Some(labels.get_label(label)?.dereference()?);
+        let object = labels.get_label(label)?.dereference()?;
+        self.object = Some(object);
+        self.is_resolved = true;
+        self.size = Some(get_smallest_byte_size(object)?);
+        // verbose_println!("resolved immediate {}",);
         Ok(())
     }
     fn get_unresolved(&self) -> Result<String, AssemblyError> {
@@ -197,12 +209,12 @@ impl IntermediateObject {
             let resolved = if let Some(obj) = self.object {
                 obj
             } else {
-                return Err(AssemblyError{code:AssemblyErrorCode::UnexpectedError,reason:format!("intermediate object of type {:?} is in an invalid trinary state. object and string are both None.",self.intertype)});
+                return Err(AssemblyError{code:AssemblyErrorCode::UnexpectedError,reason:format!("intermediate object of type {:?} is in an invalid trinary state. object and string are both None.",self.intertype),metadata:None,});
             };
             return Err(AssemblyError {
                 code: AssemblyErrorCode::ObjectAlreadyResolved,
-
                 reason: format!("{} already resolved", resolved),
+                metadata: None,
             });
         }
     }
@@ -214,15 +226,18 @@ impl IntermediateObject {
             let unresolved = if let Some(s) = self.string.clone() {
                 s
             } else {
-                return Err(AssemblyError{code:AssemblyErrorCode::UnexpectedError,reason:format!("intermediate object of type {:?} is in an invalid trinary state. object and string are both None.",self.intertype)});
+                return Err(AssemblyError{code:AssemblyErrorCode::UnexpectedError,reason:format!("intermediate object of type {:?} is in an invalid trinary state. object and string are both None.",self.intertype),metadata:None,});
             };
             return Err(AssemblyError {
                 code: AssemblyErrorCode::ObjectNotResolved,
                 reason: format!("object [ {unresolved} ] was never resolved"),
+                metadata: None,
             });
         };
-        let bytes = object.to_le_bytes();
-        Ok(bytes[0..self.size.unwrap()].to_vec())
+        let mut bytes = object.to_le_bytes()[0..self.size.unwrap()].to_vec();
+        let size_byte = self.size.unwrap() as u8;
+        bytes.insert(0, size_byte);
+        Ok(bytes)
     }
 }
 impl fmt::Display for IntermediateObject {
@@ -268,9 +283,10 @@ impl fmt::Display for IntermediateObject {
         write!(f, "[{signature}]")
     }
 }
-
+#[derive(Clone)]
 pub struct IntermediateInstruction {
     objects: Vec<IntermediateObject>,
+    metadata: MetaData,
 }
 impl fmt::Display for IntermediateInstruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -278,28 +294,33 @@ impl fmt::Display for IntermediateInstruction {
         for object in &self.objects {
             obj.push_str(&format!("{}:", object.to_string()));
         }
-        write!(f, "[IR Object {obj} ]")
+        write!(
+            f,
+            "[IR Object {obj} ]::[ {} ] at {}:{} ",
+            self.metadata.text, self.metadata.file, self.metadata.line,
+        )
     }
 }
 impl IntermediateInstruction {
     fn parse_string(
-        raw: &str,
+        raw: &MetaData,
         opcode_table: &OpcodeTable,
         register_table: &RegisterTable,
     ) -> Result<Self, AssemblyError> {
         let mut objects = vec![];
-        let tokenized = tokenize_instruction(raw)?;
-        let opcode_str = &tokenized[0];
+        let tokenized = tokenize_string(raw)?;
+        let opcode_str = &tokenized.tokens[0]; // make safe
         let operation = opcode_table.get_opcode(opcode_str)?;
         very_verbose_println!("recognized operation {operation:?}");
-        if tokenized.len() - 1 != operation.fields {
+        if tokenized.tokens.len() - 1 != operation.fields {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::IncorrectNumberOfOperands,
                 reason: format!(
                     "supplied [ {} ] operands when [ {} ] were expected",
-                    tokenized.len() - 1,
+                    tokenized.tokens.len() - 1,
                     operation.fields
                 ),
+                metadata: Some(tokenized.metadata.clone()),
             });
         }
         let op_obj = IntermediateObject::from_mnemonic(
@@ -309,7 +330,7 @@ impl IntermediateInstruction {
             register_table,
         )?;
         objects.push(op_obj);
-        for (i, raw_token) in tokenized.iter().skip(1).enumerate() {
+        for (i, raw_token) in tokenized.tokens.iter().skip(1).enumerate() {
             let expected_type = match operation.field_types.get(i){
                 Some(t) => t,
                 None => unreachable!("field count is already verified to match lengh, so element should always exist")
@@ -322,23 +343,28 @@ impl IntermediateInstruction {
             )?;
             objects.push(object);
         }
-        Ok(Self { objects })
+        Ok(Self {
+            objects,
+            metadata: raw.clone(),
+        })
     }
-    fn to_bytes(&self) -> Result<Vec<u8>, AssemblyError> {
-        let mut byte_vector: Vec<u8> = vec![];
-        for object in &self.objects {
-            let mut bytes = object.to_bytes()?;
-            byte_vector.append(&mut bytes);
-        }
-        Ok(byte_vector)
-    }
+    // fn to_bytes(&self) -> Result<Vec<u8>, AssemblyError> {
+    //     let mut byte_vector: Vec<u8> = vec![];
+    //     for object in &self.objects {
+    //         let mut bytes = object.to_bytes()?;
+    //         byte_vector.append(&mut bytes);
+    //     }
+    //     Ok(byte_vector)
+    // }
 
     fn resolve_imm(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
         for object in &mut self.objects {
             match object.intertype {
                 InterType::Imm => {
                     if !object.is_resolved {
-                        object.resolve(labels)?
+                        object
+                            .resolve(labels)
+                            .map_err(|err| err.append_metadata(&self.metadata))?
                     }
                 }
                 _ => continue,
@@ -347,10 +373,24 @@ impl IntermediateInstruction {
         Ok(())
     }
     fn resolve_program_addr(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
-        todo!()
+        for object in &mut self.objects {
+            if object.intertype == InterType::Addr {
+                object
+                    .resolve(labels)
+                    .map_err(|err| err.append_metadata(&self.metadata))?;
+            }
+        }
+        Ok(())
     }
     fn resolve_relative_addr(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
-        todo!()
+        for object in &mut self.objects {
+            if object.is_relative {
+                object
+                    .resolve(labels)
+                    .map_err(|err| err.append_metadata(&self.metadata))?;
+            }
+        }
+        Ok(())
     }
 
     fn get_size(&self) -> Result<usize, AssemblyError> {
@@ -362,10 +402,21 @@ impl IntermediateInstruction {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::ObjectNotResolved,
                     reason: format!("cannot calculate size of unresolved object : {object}"),
+                    metadata: Some(self.metadata.clone()),
                 });
             }
         }
         Ok(size)
+    }
+    pub fn to_bytes(&self) -> Result<Vec<u8>, AssemblyError> {
+        let mut bytes: Vec<u8> = vec![];
+        for object in &self.objects {
+            let object_bytes = object
+                .to_bytes()
+                .map_err(|err| err.append_metadata(&self.metadata))?;
+            bytes.extend_from_slice(&object_bytes)
+        }
+        Ok(bytes)
     }
 }
 
@@ -374,14 +425,18 @@ enum TokenizerState {
     None,
 }
 
-fn tokenize_instruction(s: &str) -> Result<Vec<String>, AssemblyError> {
+struct TokenizedString {
+    tokens: Vec<String>,
+    metadata: MetaData,
+}
+fn tokenize_string(line: &MetaData) -> Result<TokenizedString, AssemblyError> {
     let mut buf: Vec<String> = vec![];
 
     // just gonna implement a manual split so i can preserve strings
     let mut token_buf: String = String::new();
     let mut state = TokenizerState::None;
     let mut escape = false;
-    for char_token in s.chars() {
+    for char_token in line.text.chars() {
         if escape {
             // process escape stuff
             // there might be a better way to do this
@@ -393,6 +448,7 @@ fn tokenize_instruction(s: &str) -> Result<Vec<String>, AssemblyError> {
                     return Err(AssemblyError {
                         code: AssemblyErrorCode::SyntaxError,
                         reason: format!("\\{char_token} is not a valid escape sequence"),
+                        metadata: Some(line.clone()),
                     })
                 }
             };
@@ -411,8 +467,10 @@ fn tokenize_instruction(s: &str) -> Result<Vec<String>, AssemblyError> {
                     SPACE | COMMA => match state {
                         TokenizerState::InString => token_buf.push(char_token),
                         TokenizerState::None => {
-                            very_verbose_println!("built token {token_buf}");
-                            buf.push(token_buf.clone());
+                            if !token_buf.is_empty() {
+                                very_verbose_println!("built token {token_buf}");
+                                buf.push(token_buf.clone());
+                            }
                             token_buf.clear();
                         }
                     },
@@ -425,20 +483,33 @@ fn tokenize_instruction(s: &str) -> Result<Vec<String>, AssemblyError> {
     buf.push(token_buf.clone());
     token_buf.clear();
     very_verbose_println!("tokenized {buf:?}");
-    Ok(buf)
+    Ok(TokenizedString {
+        tokens: buf,
+        metadata: line.clone(),
+    })
 }
-
+#[derive(Clone)]
 pub struct IntermediateProgram {
     instructions: Vec<IntermediateInstruction>,
-    size: Option<usize>,
+    pub size: Option<usize>,
+    pub labels: Labels,
+}
+impl fmt::Display for IntermediateProgram {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut string = String::new();
+        for instruction in &self.instructions {
+            string.push_str(&(instruction.to_string() + "\n"));
+        }
+        write!(f, "{string}")
+    }
 }
 impl IntermediateProgram {
-    pub fn parse_program(program_raw: &Vec<String>) -> Result<IntermediateProgram, AssemblyError> {
+    pub fn parse_program(program_raw: &[MetaData]) -> Result<IntermediateProgram, AssemblyError> {
         let opcode_table = OpcodeTable::build_table()?;
         let register_table = RegisterTable::build_table();
         let mut program = vec![];
         for raw_instruction in program_raw {
-            if raw_instruction.starts_with(constant::LABEL) {
+            if raw_instruction.text.starts_with(constant::LABEL) {
                 continue;
             }
 
@@ -446,30 +517,46 @@ impl IntermediateProgram {
                 raw_instruction,
                 &opcode_table,
                 &register_table,
-            )?;
+            )
+            .map_err(|err| err.append_metadata(raw_instruction))?;
             verbose_println!("built instruction {instruction}");
             program.push(instruction);
         }
+
         Ok(Self {
             instructions: program,
             size: None,
+            labels: Labels::new(),
         })
     }
-
+    pub fn to_bytes(&self) -> Result<(Vec<u8>, Vec<u8>), AssemblyError> {
+        let mut debug_partition = DebugPartition::new();
+        let mut program_machine_code: Vec<u8> = vec![];
+        for instruction in &self.instructions {
+            let code = instruction.to_bytes()?;
+            debug_partition.insert(
+                MMIO_ADDRESS_SPACE + program_machine_code.len(), // this should be the program counter?
+                &instruction.metadata,
+            );
+            program_machine_code.extend_from_slice(&code);
+        }
+        let debug_image = debug_partition.to_bytes();
+        Ok((program_machine_code, debug_image))
+    }
     pub fn collect_program_labels(
-        &self,
-        clean_program_src: &[String],
-    ) -> Result<Vec<Label>, AssemblyError> {
-        let mut labels: Vec<Label> = vec![];
+        &mut self,
+        clean_program_src: &[MetaData],
+    ) -> Result<(), AssemblyError> {
+        // let mut labels: Labels = Labels::new();
         let mut program_head = MMIO_ADDRESS_SPACE;
         // let mut line = 0;
         let mut i = 0;
         for line in clean_program_src {
-            if line.trim().starts_with(LABEL) {
-                let mut label = Label::new(&line.trim()[1..], LabelLocation::Ram);
+            if line.text.trim().starts_with(LABEL) {
+                let mut label = Label::new(&line.text.trim()[1..], LabelLocation::Program);
                 label.resolve(program_head);
                 very_verbose_println!("found program label {label}");
-                labels.push(label)
+                self.labels.insert_label(&label)
             } else {
                 let instruction = match self.instructions.get(i) {
                     Some(instruction) => instruction,
@@ -478,7 +565,7 @@ impl IntermediateProgram {
                             code: AssemblyErrorCode::UnexpectedError,
                             reason: format!(
                                 "attempted to read instruction at index {i} associated with {line} but none was found"
-                            ),
+                            ),metadata:Some(line.clone()),
                         })
                     }
                 };
@@ -486,12 +573,9 @@ impl IntermediateProgram {
 
                 // very_very_verbose_println!("advanced head by {instruction_size}");
                 program_head += instruction.get_size()?;
-                very_very_verbose_println!(
-                    "head::{program_head} advanced past {line} :: {instruction}"
-                );
             }
         }
-        Ok(labels)
+        Ok(())
     }
     pub fn resolve_immediates(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
         for instruction in &mut self.instructions {
@@ -510,25 +594,17 @@ impl IntermediateProgram {
         self.size = Some(size);
         Ok(size)
     }
-    pub fn resolve_program_addresses(&mut self, labels: Labels) -> Result<(), AssemblyError> {
+    pub fn resolve_program_addresses(&mut self) -> Result<(), AssemblyError> {
         for instruction in &mut self.instructions {
-            instruction.resolve_program_addr(&labels)?;
+            instruction.resolve_program_addr(&self.labels)?;
         }
         Ok(())
     }
     pub fn resolve_ram_addresses(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
         for instruction in &mut self.instructions {
-            instruction.resolve_relative_addr(&labels)?;
+            instruction.resolve_relative_addr(labels)?;
         }
         Ok(())
-    }
-    pub fn to_bytes(&self) -> Result<Vec<u8>, AssemblyError> {
-        let mut byte_vector: Vec<u8> = vec![];
-        for object in &self.instructions {
-            let mut bytes = object.to_bytes()?;
-            byte_vector.append(&mut bytes);
-        }
-        Ok(byte_vector)
     }
 }
 
@@ -555,6 +631,7 @@ impl Unit {
             _ => Err(AssemblyError {
                 code: AssemblyErrorCode::SyntaxError,
                 reason: format!("{bit_count} is not a valid word size"),
+                metadata: None,
             }),
         }
     }
@@ -581,41 +658,47 @@ impl Data {
         }
     }
     pub fn shift_addresses(&mut self, ram_base_address: usize) -> Result<(), AssemblyError> {
+        verbose_println!("fixing relative addresses to rambase {ram_base_address}");
         for label in &mut self.labels.table {
             label.1.shift(ram_base_address)?;
         }
         Ok(())
     }
-    pub fn parse(&mut self, clean_src: &[String]) -> Result<(), AssemblyError> {
+    pub fn parse(&mut self, clean_src: &[MetaData]) -> Result<(), AssemblyError> {
         verbose_println!("--- PARSE DATA START --");
         for line in clean_src {
             self.parse_line(line)?;
         }
         verbose_println!("data image : {:?}", self.data_image);
+        // verbose_println!("data labels : {:?}", self.labels.table);
         verbose_println!("--- PARSE DATA END --");
         Ok(())
     }
-    fn parse_line(&mut self, line: &str) -> Result<(), AssemblyError> {
-        let (label_name, keyword_and_instruction) = if let Some(s) = line.split_once(SPACE) {
+    fn parse_line(&mut self, line: &MetaData) -> Result<(), AssemblyError> {
+        let (label_name, keyword_and_instruction) = if let Some(s) = line.text.split_once(SPACE) {
             s
         } else {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::SyntaxError,
-                reason: format!("could not find label in {line}"),
+                reason: format!("could not find label"),
+                metadata: Some(line.clone()),
             });
         };
         if label_name != "_" {
             let mut label = Label::new(label_name, LabelLocation::Ram);
             label.resolve(self.data_image.len());
             // label.is_relative_to_ram_base = true;
+            verbose_println!("found {label}");
             self.labels.insert_label(&label);
         }
+
         let (keyword, instruction) = if let Some(s) = keyword_and_instruction.split_once(SPACE) {
             s
         } else {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::SyntaxError,
                 reason: format!("could not find keyword in {keyword_and_instruction}"),
+                metadata: Some(line.clone()),
             });
         };
 
@@ -643,6 +726,7 @@ impl Data {
                         return Err(AssemblyError {
                             code: AssemblyErrorCode::SyntaxError,
                             reason: format!("syntax error in {rest} :: failed to split"),
+                            metadata: Some(line.clone()),
                         })
                     }
                 };
@@ -652,6 +736,7 @@ impl Data {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::UnrecognizedDataKeyword,
                     reason: format!("{keyword} is not a valid keyword"),
+                    metadata: Some(line.clone()),
                 })
             }
         };
@@ -718,6 +803,7 @@ impl Data {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::SyntaxError,
                 reason: format!("string never closed in {s}"),
+                metadata: None,
             });
         }
         if !byte_raw_buf.is_empty() {
@@ -739,6 +825,7 @@ impl Data {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::SyntaxError,
                     reason: format!("unsupported value in data"),
+                    metadata: None,
                 })
             }
         };
@@ -778,6 +865,7 @@ impl Data {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::InvalidImmediate,
                     reason: format!("{byte_raw_buf} is an invalid state of parsed immediate"),
+                    metadata: None,
                 })
             }
         };
@@ -787,6 +875,7 @@ impl Data {
                 reason: format!(
                     "{literal_byte} is too big for inline byte definition in the string keyword"
                 ),
+                metadata: None,
             });
         }
         Ok(literal_byte as u8)
@@ -809,8 +898,8 @@ impl Data {
 
                             (Some(literal),None,false) => literal,
                             (None,Some(label),false) => self.labels.get_label(&label)?.dereference()?,
-                            (_,_,true) => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("{expr} contains a relative ({RELATIVE}) literal which is not supported in {DATA_MARKER}")}),
-                            _ => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("illegal state entered when attempting to parse {expr}")})
+                            (_,_,true) => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("{expr} contains a relative ({RELATIVE}) literal which is not supported in {DATA_MARKER}"),metadata:None,}),
+                            _ => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("illegal state entered when attempting to parse {expr}"),metadata:None,})
 
                         }
                     };
@@ -827,8 +916,8 @@ impl Data {
             let resolved_literal = match parse_value(&token_buf)?{
                 (Some(literal),None,false) => literal,
                 (None,Some(label),false) => self.labels.get_label(&label)?.dereference()?,
-                (_,_,true) => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("{expr} contains a relative ({RELATIVE}) literal which is not supported in {DATA_MARKER}")}),
-                _ => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("illegal state entered when attempting to parse {expr}")})
+                (_,_,true) => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("{expr} contains a relative ({RELATIVE}) literal which is not supported in {DATA_MARKER}"),metadata:None,}),
+                _ => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("illegal state entered when attempting to parse {expr}"),metadata:None,})
             };
             resolved_expr.push_str(&resolved_literal.to_string());
         }
@@ -838,6 +927,7 @@ impl Data {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::SyntaxError,
                     reason: format!("failed to parse expression {expr}: {err}"),
+                    metadata: None,
                 })
             }
         } as usize;
@@ -852,6 +942,7 @@ impl Data {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::InvalidImmediate,
                 reason: format!("{string} is a relative immediate, which is not supported in data"),
+                metadata: None,
             });
         }
         let literal = match parsed_value {
@@ -861,6 +952,7 @@ impl Data {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::InvalidImmediate,
                     reason: format!("{parsed_value:?} is an invalid state of parsed immediate"),
+                    metadata: None,
                 })
             }
         };
@@ -873,6 +965,7 @@ impl Data {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::SyntaxError,
                     reason: format!("missing unit (8/16/32/64)"),
+                    metadata: None,
                 })
             }
         };

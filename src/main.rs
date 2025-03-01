@@ -2,7 +2,7 @@ use assembler::Assembler;
 use colorize::AnsiColor;
 use constant::{DEFAULT_BINARY_NAME, NAME, SIGNATURE};
 use data::{AssemblyError, AssemblyErrorCode};
-use std::process::exit;
+use std::{fs::File, io::Write, process::exit};
 
 mod assembler;
 mod constant;
@@ -44,6 +44,30 @@ fn _very_very_verbose_println(msg: &str) {
     }
 }
 
+fn write_file(image: &[u8], output_file: &str) -> Result<(), AssemblyError> {
+    let mut outf = match File::create(output_file) {
+        Ok(f) => f,
+        Err(err) => {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::OutputWriteError,
+                reason: format!("error opening file {output_file} :: {err}"),
+                metadata: None,
+            })
+        }
+    };
+    match outf.write_all(image) {
+        Ok(()) => (),
+        Err(err) => {
+            return Err(AssemblyError {
+                code: AssemblyErrorCode::OutputWriteError,
+                reason: format!("error writing to file {output_file} :: {err}"),
+                metadata: None,
+            })
+        }
+    };
+    Ok(())
+}
+
 #[macro_export]
 macro_rules! verbose_println {
     ($($arg:tt)*) => (crate::_verbose_println(&format!($($arg)*)));
@@ -57,23 +81,6 @@ macro_rules! very_very_verbose_println {
     ($($arg:tt)*) => (crate::_very_very_verbose_println(&format!($($arg)*)));
 }
 
-fn write_binary(
-    binary: Vec<u8>,
-    program_length: u64,
-    data_length: u64,
-    entry_point_address: u64,
-) -> Result<(), AssemblyError> {
-    let mut nisvc_ef_img: Vec<u8> = vec![];
-    nisvc_ef_img.extend_from_slice(SIGNATURE);
-    let data_length_bytes = data_length.to_le_bytes();
-    let program_length_bytes = program_length.to_le_bytes();
-    let entry_point_bytes = entry_point_address.to_le_bytes();
-    nisvc_ef_img.extend_from_slice(&program_length_bytes);
-    nisvc_ef_img.extend_from_slice(&data_length_bytes);
-    nisvc_ef_img.extend_from_slice(&entry_point_bytes);
-    nisvc_ef_img.extend(binary.as_slice());
-    Ok(())
-}
 fn help() -> ! {
     println!("Usage: {NAME} [options...] [nisvc-asmfile...]\n\
         Options:\n\
@@ -103,6 +110,7 @@ fn main() {
                     None => handle_fatal_assembly_err(AssemblyError {
                         code: AssemblyErrorCode::CLIArgParseError,
                         reason: format!("missing filename after '{arg}'"),
+                        metadata: None,
                     }),
                 };
                 // verbose_println!("output file set to {output_file}");
@@ -113,6 +121,7 @@ fn main() {
                     handle_fatal_assembly_err(AssemblyError {
                         code: AssemblyErrorCode::CLIArgParseError,
                         reason: format!("verbose flag set twice'{arg}'"),
+                        metadata: None,
                     })
                 }
                 VERBOSE_FLAG = true;
@@ -136,6 +145,7 @@ fn main() {
                     AssemblyError {
                         code: AssemblyErrorCode::CLIArgParseError,
                         reason: format!("unrecognized flag :: {f}"),
+                        metadata: None,
                     }
                 );
                 help()
@@ -149,6 +159,7 @@ fn main() {
         handle_fatal_assembly_err(AssemblyError {
             code: AssemblyErrorCode::CLIArgParseError,
             reason: "no input files".to_string(),
+            metadata: None,
         })
     }
 
@@ -172,32 +183,35 @@ fn main() {
         Ok(()) => (),
         Err(err) => handle_fatal_assembly_err(err),
     };
-
+    verbose_println!("passed checkpoint PARSED");
     // resolve IR placeholder labels
     match assembler.resolve() {
         Ok(()) => (),
         Err(err) => handle_fatal_assembly_err(err),
     }
+
     match assembler.resolve_entry_point() {
         Ok(()) => (),
         Err(err) => handle_fatal_assembly_err(err),
     };
+    verbose_println!("passed checkpoint RESOLVED");
+
+    very_verbose_println!("program:\n{}", assembler.program.clone().unwrap());
     // generate nisvc machine code
-    let (binary, program_length, data_length) = match assembler.package() {
+    let nisvc_ef = match assembler.package() {
         Ok(i) => i,
         Err(err) => handle_fatal_assembly_err(err),
     };
-
-    //prepare entrypoint
-    let entry_point = match assembler.entry_point.as_ref().unwrap().dereference() {
-        Ok(address) => address,
-        Err(err) => handle_fatal_assembly_err(err),
-    } as u64;
-
     // write machine code to file
-    match write_binary(binary, program_length, data_length, entry_point) {
+    match write_file(&nisvc_ef, output_file) {
         Ok(()) => (),
         Err(err) => handle_fatal_assembly_err(err),
     }
     verbose_println!("wrote binary file {output_file}");
+
+    //prepare entrypoint
+    // let entry_point = match assembler.entry_point.as_ref().unwrap().dereference() {
+    //     Ok(address) => address,
+    //     Err(err) => handle_fatal_assembly_err(err),
+    // } as u64;
 }

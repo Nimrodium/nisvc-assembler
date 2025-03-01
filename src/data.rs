@@ -1,7 +1,81 @@
-use crate::constant::{self, Register};
+use crate::{
+    constant::{self, Register},
+    very_verbose_println,
+};
 use colorize::AnsiColor;
 use constant::NAME;
 use std::{collections::HashMap, fmt};
+
+#[derive(Clone)]
+pub struct MetaData {
+    pub text: String,
+    pub file: String,
+    pub line: usize,
+}
+
+impl fmt::Display for MetaData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let position = format!("at {} line {}:", self.file, self.line).yellow();
+        write!(f, "{position}\n\t >> {}", self.text.clone().red())
+    }
+}
+// at src/louis.nisvc_asm line 14:
+//  >> add r1,r2;
+
+#[derive(Debug)]
+pub enum AssemblyErrorCode {
+    UnexpectedError,
+    InvalidOpcodeDefinition,
+    UnrecognizedOpcode,
+    UnrecognizedDataKeyword,
+    IncorrectNumberOfOperands,
+    ObjectAlreadyResolved,
+    ObjectNotResolved,
+    UndefinedLabel,
+    ObjectTooLarge,
+    LiteralDefinedAsAddress,
+    InvalidRegisterName,
+    EmptyLiteral,
+    InvalidImmediate,
+    InvalidAddress,
+    CLIArgParseError,
+    NotImplemented,
+    SourceFileInitializationError,
+    SyntaxError,
+    UnresolvedLabel,
+    InvalidEntryPoint,
+    OutputWriteError,
+}
+
+pub struct AssemblyError {
+    pub code: AssemblyErrorCode,
+    pub reason: String,
+    pub metadata: Option<MetaData>,
+    // pub severity: Severity,
+}
+impl AssemblyError {
+    pub fn append_metadata(mut self, metadata: &MetaData) -> Self {
+        self.metadata = Some(metadata.clone());
+        self
+    }
+}
+impl fmt::Display for AssemblyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let string = format!(
+            "{NAME}: {} {} :: {}",
+            "error:".red(),
+            format!("{:?}", self.code).yellow(),
+            self.reason
+        );
+        let metadata = if let Some(md) = self.metadata.clone() {
+            md.to_string()
+        } else {
+            String::new()
+        };
+        write!(f, "{string}\n{metadata}")
+    }
+}
+
 pub fn get_smallest_byte_size(integer: usize) -> Result<usize, AssemblyError> {
     if integer > Register::MAX as usize {
         return Err(AssemblyError {
@@ -11,6 +85,7 @@ pub fn get_smallest_byte_size(integer: usize) -> Result<usize, AssemblyError> {
                 "integer too large to fit within target registers. {integer} larger than {}",
                 Register::MAX
             ),
+            metadata: None,
         });
     };
     if integer > u64::MAX as usize {
@@ -25,13 +100,14 @@ pub fn get_smallest_byte_size(integer: usize) -> Result<usize, AssemblyError> {
         Ok(1)
     }
 }
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum InterType {
     Reg,
     Addr,
     Imm,
     Op,
 }
+#[derive(Clone)]
 pub struct Labels {
     pub table: HashMap<String, Label>,
 }
@@ -44,6 +120,11 @@ impl Labels {
     pub fn insert_label(&mut self, label: &Label) {
         self.table.insert(label.name.clone(), label.clone());
     }
+    pub fn extend_from_self(&mut self, labels: &Labels) {
+        // self.table.extend(labels.table)
+        self.table
+            .extend(labels.table.iter().map(|(k, v)| (k.clone(), v.clone())));
+    }
     pub fn extend_from_labels_slice(&mut self, slice: &[Label]) {
         for label in slice {
             self.insert_label(label);
@@ -55,6 +136,7 @@ impl Labels {
             None => Err(AssemblyError {
                 code: AssemblyErrorCode::UndefinedLabel,
                 reason: format!("label [ {label} ] was not found in the label table"),
+                metadata: None,
             }),
         }
     }
@@ -64,6 +146,7 @@ impl Labels {
             None => Err(AssemblyError {
                 code: AssemblyErrorCode::UndefinedLabel,
                 reason: format!("label [ {label} ] was not found in the label table"),
+                metadata: None,
             }),
         }
     }
@@ -88,7 +171,11 @@ impl fmt::Display for Label {
             Some(address) => format!("resolved [ {} ]", address.to_string()),
             None => "unresolved".to_string(),
         };
-        write!(f, "[ {} ]::{}", self.name, resolved)
+        write!(
+            f,
+            "[ {} ]::[ {} ]::[ {:?} ]",
+            self.name, resolved, self.label_location
+        )
     }
 }
 impl fmt::Debug for Label {
@@ -126,6 +213,7 @@ impl Label {
                     "attempted to dereference unresolved label [ {} ]",
                     self.name
                 ),
+                metadata: None,
             }),
         }
     }
@@ -137,6 +225,7 @@ impl Label {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::UnresolvedLabel,
                 reason: format!("attempted to shift unresolved label [ {} ]  ", self.name),
+                metadata: None,
             });
         };
 
@@ -144,46 +233,6 @@ impl Label {
     }
 }
 
-#[derive(Debug)]
-pub enum AssemblyErrorCode {
-    UnexpectedError,
-    InvalidOpcodeDefinition,
-    UnrecognizedOpcode,
-    UnrecognizedDataKeyword,
-    IncorrectNumberOfOperands,
-    ObjectAlreadyResolved,
-    ObjectNotResolved,
-    UndefinedLabel,
-    ObjectTooLarge,
-    LiteralDefinedAsAddress,
-    InvalidRegisterName,
-    EmptyLiteral,
-    InvalidImmediate,
-    InvalidAddress,
-    CLIArgParseError,
-    NotImplemented,
-    SourceFileInitializationError,
-    SyntaxError,
-    UnresolvedLabel,
-    InvalidEntryPoint,
-}
-
-pub struct AssemblyError {
-    pub code: AssemblyErrorCode,
-    pub reason: String,
-    // pub severity: Severity,
-}
-impl fmt::Display for AssemblyError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let string = format!(
-            "{NAME}: {} {} :: {}",
-            "error:".red(),
-            format!("{:?}", self.code).yellow(),
-            self.reason
-        );
-        write!(f, "{string}")
-    }
-}
 #[derive(Debug)]
 pub struct OpcodeEntry {
     pub code: usize,
@@ -196,6 +245,7 @@ impl OpcodeEntry {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::InvalidOpcodeDefinition,
                 reason: format!("opcode field count does not align with defined field type length :: in [ {code:#x} ] [ {fields} ] [ {field_types:?} ]"),
+                metadata:None
             });
         }
         Ok(OpcodeEntry {
@@ -387,6 +437,7 @@ impl OpcodeTable {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::UnrecognizedOpcode,
                     reason: format!("[ {key} ] is not a valid operation"),
+                    metadata: None,
                 })
             }
         };
@@ -437,9 +488,101 @@ impl RegisterTable {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::InvalidRegisterName,
                     reason: format!("[ {reg_str} ] is not a valid register"),
+                    metadata: None,
                 })
             }
         };
         Ok(*reg_id)
     }
 }
+
+pub struct DebugPartition {
+    map: HashMap<usize, MetaData>,
+}
+// parsed by the program loader
+impl DebugPartition {
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+    pub fn insert(&mut self, program_counter: usize, metadata: &MetaData) {
+        self.map.insert(program_counter, metadata.clone());
+    }
+
+    // byte format
+    // 8 bytes -> how many bytes is debug partition
+    // 8 bytes -> how many source files
+    // for source file
+    //  8 bytes -> how many bytes is this source file table
+    //  key value pairs (8 bytes program counter : (2 bytes length of string, string))
+    /// generate data partition image
+    pub fn to_bytes(&self) -> Vec<u8> {
+        // seperate files
+        let mut files: HashMap<String, Vec<MetaDataDebugEntry>> = HashMap::new();
+        for (program_counter, metadata) in &self.map {
+            let entry = MetaDataDebugEntry::new(metadata, *program_counter);
+            let file = files.entry(metadata.file.clone()).or_insert_with(Vec::new);
+            // file.insert(*program_counter, value);
+            file.push(entry);
+        }
+        let file_count = files.len();
+        let mut files_image: Vec<u8> = vec![];
+        for (file_name, contents) in files {
+            let mut file_image: Vec<u8> = vec![];
+            for entry in contents {
+                file_image.extend_from_slice(&entry.to_bytes());
+            }
+            let file_length_bytes =
+                &file_image.len().to_le_bytes()[0..DEBUG_PARTITION_FILE_LENGTH_SIZE];
+            let file_name_bytes = file_name.as_bytes();
+            files_image.extend_from_slice(file_length_bytes);
+            files_image.extend_from_slice(
+                &file_name_bytes.len().to_le_bytes()[0..DEBUG_PARTITION_TEXT_LENGTH_SIZE],
+            );
+            files_image.extend_from_slice(file_name_bytes);
+            files_image.extend_from_slice(&file_image);
+        }
+
+        let data_partition_size = DEBUG_PARTITION_FILE_LENGTH_SIZE + files_image.len();
+        let mut image: Vec<u8> = vec![];
+
+        image.extend_from_slice(&data_partition_size.to_le_bytes()[0..DEBUG_PARTITION_LENGTH_SIZE]);
+        image.extend_from_slice(&file_count.to_le_bytes()[0..DEBUG_PARTITION_FILE_LENGTH_SIZE]);
+        image.extend_from_slice(&files_image);
+        image
+    }
+}
+
+struct MetaDataDebugEntry {
+    text: String,
+    line: usize,
+    location: usize,
+}
+impl MetaDataDebugEntry {
+    fn new(metadata: &MetaData, location: usize) -> Self {
+        Self {
+            text: metadata.text.clone(),
+            line: metadata.line,
+            location,
+        }
+    }
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut buffer: Vec<u8> = vec![];
+        let location_bytes = &self.location.to_le_bytes()[0..DEBUG_PARTITION_PC_KEY_SIZE];
+        buffer.extend_from_slice(location_bytes);
+
+        let text_length_bytes = &self.text.len().to_le_bytes()[0..DEBUG_PARTITION_TEXT_LENGTH_SIZE];
+
+        buffer.extend_from_slice(text_length_bytes);
+        if !self.text.is_ascii() {
+            very_verbose_println!("warning: non ascii character detected in source")
+        }
+        buffer.extend_from_slice(&self.text.as_bytes());
+        buffer
+    }
+}
+const DEBUG_PARTITION_PC_KEY_SIZE: usize = 2; //
+const DEBUG_PARTITION_TEXT_LENGTH_SIZE: usize = 2;
+const DEBUG_PARTITION_FILE_LENGTH_SIZE: usize = 8;
+const DEBUG_PARTITION_LENGTH_SIZE: usize = 8;

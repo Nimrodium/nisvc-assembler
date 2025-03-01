@@ -1,3 +1,5 @@
+.entry
+    !start
 .data;
     alias1 equ $10
     alias2 equ $1*($!alias1+$b01)
@@ -9,5 +11,8 @@
 
     duplicate dup 8 $10:$xfe
 .program;
-    movim o1, !hello_world // o1 = pointer to start of string
-    movim o2, !hello_world_len // o2 = length of string
+    !start
+    add r1,r2,r3
+    movim r1, @!hello_world // r1 = pointer to start of string
+    movim r2, @!hello_world_len // r2 = length of string
+    jmp $!start
