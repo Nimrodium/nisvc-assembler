@@ -3,9 +3,9 @@ use std::fmt;
 
 use crate::{
     constant::{
-        self, ABSOLUTE, ASSEMBLY_PTR, BINARY, COMMA, DATA_MARKER, DEC, DUP_SEPERATOR, ESCAPE, HEX,
-        LABEL, MAGIC_RESERVED_MEM, MMIO_ADDRESS_SPACE, OPCODE_BYTES, RELATIVE, SEPERATOR, SPACE,
-        STR,
+        self, ABSOLUTE, ADDRESS_BYTES, ASSEMBLY_PTR, BINARY, COMMA, DATA_MARKER, DEC,
+        DUP_SEPERATOR, ESCAPE, HEX, LABEL, MAGIC_RESERVED_MEM, MMIO_ADDRESS_SPACE, OPCODE_BYTES,
+        RELATIVE, SEPERATOR, SPACE, STR,
     },
     data::{
         get_smallest_byte_size, AssemblyError, AssemblyErrorCode, DebugPartition, InterType, Label,
@@ -186,19 +186,30 @@ impl IntermediateObject {
     }
 
     fn resolve(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
-        let label = if let Some(s) = &self.string {
-            s
-        } else {
-            return Err(AssemblyError {
-                code: AssemblyErrorCode::ObjectAlreadyResolved,
-                reason: format!("object {} already defined", self.object.unwrap()),
-                metadata: None,
-            });
-        };
-        let object = labels.get_label(label)?.dereference()?;
-        self.object = Some(object);
-        self.is_resolved = true;
-        self.size = Some(get_smallest_byte_size(object)?);
+        if !self.is_resolved {
+            let label = if let Some(s) = &self.string {
+                s
+            } else {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::ObjectAlreadyResolved,
+                    reason: format!("object {} already defined", self.object.unwrap()),
+                    metadata: None,
+                });
+            };
+            let object = labels.get_label(label)?.dereference()?;
+            self.object = Some(object);
+
+            if self.intertype == InterType::Addr {
+                self.size = Some(ADDRESS_BYTES);
+                self.is_resolved = true;
+            } else if self.is_relative {
+                self.size = Some(ADDRESS_BYTES);
+                self.is_resolved = false;
+            } else {
+                self.size = Some(get_smallest_byte_size(object)?);
+                self.is_resolved = true;
+            }
+        }
         // verbose_println!("resolved immediate {}",);
         Ok(())
     }
@@ -236,7 +247,9 @@ impl IntermediateObject {
         };
         let mut bytes = object.to_le_bytes()[0..self.size.unwrap()].to_vec();
         let size_byte = self.size.unwrap() as u8;
-        bytes.insert(0, size_byte);
+        if self.intertype == InterType::Imm {
+            bytes.insert(0, size_byte)
+        };
         Ok(bytes)
     }
 }
@@ -357,21 +370,33 @@ impl IntermediateInstruction {
     //     Ok(byte_vector)
     // }
 
+    // fn resolve_imm(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
+    //     for object in &mut self.objects {
+    //         match object.intertype {
+    //             InterType::Imm => {
+    //                 if !object.is_resolved {
+    //                     object
+    //                         .resolve(labels)
+    //                         .map_err(|err| err.append_metadata(&self.metadata))?
+    //                 }
+    //             }
+    //             _ => continue,
+    //         }
+    //     }
+    //     Ok(())
+    // }
+
     fn resolve_imm(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
         for object in &mut self.objects {
-            match object.intertype {
-                InterType::Imm => {
-                    if !object.is_resolved {
-                        object
-                            .resolve(labels)
-                            .map_err(|err| err.append_metadata(&self.metadata))?
-                    }
-                }
-                _ => continue,
+            if object.intertype == InterType::Imm && !object.is_resolved {
+                object
+                    .resolve(labels)
+                    .map_err(|err| err.append_metadata(&self.metadata))?
             }
         }
         Ok(())
     }
+
     fn resolve_program_addr(&mut self, labels: &Labels) -> Result<(), AssemblyError> {
         for object in &mut self.objects {
             if object.intertype == InterType::Addr {
@@ -389,6 +414,7 @@ impl IntermediateInstruction {
                     .resolve(labels)
                     .map_err(|err| err.append_metadata(&self.metadata))?;
             }
+            object.is_resolved = true;
         }
         Ok(())
     }
@@ -397,7 +423,11 @@ impl IntermediateInstruction {
         let mut size = 0;
         for object in &self.objects {
             size += if let Some(i) = object.size {
-                i
+                if object.intertype == InterType::Imm {
+                    i + 1
+                } else {
+                    i
+                }
             } else {
                 return Err(AssemblyError {
                     code: AssemblyErrorCode::ObjectNotResolved,
@@ -553,7 +583,7 @@ impl IntermediateProgram {
         let mut i = 0;
         for line in clean_program_src {
             if line.text.trim().starts_with(LABEL) {
-                let mut label = Label::new(&line.text.trim()[1..], LabelLocation::Program);
+                let mut label = Label::new(&line.text.trim()[1..], LabelLocation::Program, false);
                 label.resolve(program_head);
                 very_verbose_println!("found program label {label}");
                 self.labels.insert_label(&label)
@@ -572,7 +602,10 @@ impl IntermediateProgram {
                 i += 1;
 
                 // very_very_verbose_println!("advanced head by {instruction_size}");
-                program_head += instruction.get_size()?;
+                let size = instruction.get_size()?;
+                program_head += size;
+                // program_head += instruction.get_size()?;
+                very_very_verbose_println!("{} size::{size}", instruction.metadata.text);
             }
         }
         Ok(())
@@ -660,10 +693,26 @@ impl Data {
     pub fn shift_addresses(&mut self, ram_base_address: usize) -> Result<(), AssemblyError> {
         verbose_println!("fixing relative addresses to rambase {ram_base_address}");
         for label in &mut self.labels.table {
-            label.1.shift(ram_base_address)?;
+            let old = label.1.dereference()?;
+            label.1.apply_offset(ram_base_address)?;
+            verbose_println!(
+                "{} shifted from {} to {}",
+                label.1.name,
+                old,
+                label.1.dereference()?
+            );
         }
         Ok(())
     }
+    // 2+(x*1)+1+(x*1) = 3+(x*2)
+    // 2+(x*1)-1+(x*1) = 1+(x*2)
+    // x = 10
+    // 2+(10*1)+1+(10*1) = 3+(10*2) -> 23
+    // 2+(10*1)+1+(10*1) = 12+11 -> 23
+    //
+    // 2+(10*1)-1+(10*1) = 1+(10*2) -> 21
+    // 2+(10*1)-1+(10*1) = 12-11 -> 1
+
     pub fn parse(&mut self, clean_src: &[MetaData]) -> Result<(), AssemblyError> {
         verbose_println!("--- PARSE DATA START --");
         for line in clean_src {
@@ -685,11 +734,11 @@ impl Data {
             });
         };
         if label_name != "_" {
-            let mut label = Label::new(label_name, LabelLocation::Ram);
+            let mut label = Label::new(label_name, LabelLocation::Ram, true);
             label.resolve(self.data_image.len());
+            self.labels.insert_label(&label);
             // label.is_relative_to_ram_base = true;
             verbose_println!("found {label}");
-            self.labels.insert_label(&label);
         }
 
         let (keyword, instruction) = if let Some(s) = keyword_and_instruction.split_once(SPACE) {
@@ -712,9 +761,11 @@ impl Data {
                 self.reserve_bytes(unit, rest)?
             }
             "equ" => {
-                let immediate = self.equate(instruction)?;
+                let (immediate, offset_multiplier) = self.equate(instruction)?;
                 let label = self.labels.get_mut_label(label_name)?;
                 label.resolve(immediate);
+                label.label_location = LabelLocation::Immediate;
+                // label.offset_multiplier = offset_multiplier;
                 very_verbose_println!("defined alias [ {label} ] from {instruction}")
             }
             "str" => self.define_string(instruction)?,
@@ -740,6 +791,7 @@ impl Data {
                 })
             }
         };
+
         Ok(())
     }
     fn duplicate(
@@ -748,9 +800,9 @@ impl Data {
         count_expr: &str,
         value_expr: &str,
     ) -> Result<(), AssemblyError> {
-        let value = &self.equate(value_expr)?;
+        let (value, _) = &self.equate(value_expr)?;
         let bytes_to_duplicate = &value.to_le_bytes()[0..unit.bytes()];
-        let count = self.equate(count_expr)?;
+        let (count, _) = self.equate(count_expr)?;
         for _ in 0..=count {
             self.data_image.extend_from_slice(bytes_to_duplicate);
         }
@@ -883,9 +935,11 @@ impl Data {
 
     /// equate a data expression
     /// kinda sucks ass
-    fn equate(&self, expr: &str) -> Result<usize, AssemblyError> {
+    /// value and offset_multiplier
+    fn equate(&self, expr: &str) -> Result<(usize, usize), AssemblyError> {
         let mut resolved_expr = String::new();
         let mut token_buf = String::new();
+        let mut offset_multiplier: usize = 0;
         let operations = ['+', '-', '*', '/', '%', ' ', '(', ')'];
         for char_token in expr.chars() {
             if operations.contains(&char_token) {
@@ -897,7 +951,15 @@ impl Data {
                         match parse_value(&token_buf.trim())?{
 
                             (Some(literal),None,false) => literal,
-                            (None,Some(label),false) => self.labels.get_label(&label)?.dereference()?,
+                            (None,Some(label),false) => {
+                                let label = self.labels.get_label(&label)?;
+                                // if label.offset_multiplier > 0{
+
+                                // }
+
+
+
+                                label.dereference()?},
                             (_,_,true) => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("{expr} contains a relative ({RELATIVE}) literal which is not supported in {DATA_MARKER}"),metadata:None,}),
                             _ => return Err(AssemblyError{code:AssemblyErrorCode::SyntaxError,reason:format!("illegal state entered when attempting to parse {expr}"),metadata:None,})
 
@@ -932,7 +994,7 @@ impl Data {
             }
         } as usize;
         verbose_println!("resolved {expr} -> {resolved_expr} -> {result} ");
-        Ok(result)
+        Ok((result, offset_multiplier))
     }
 
     /// internal helper

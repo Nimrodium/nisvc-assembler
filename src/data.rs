@@ -1,6 +1,6 @@
 use crate::{
     constant::{self, Register},
-    very_verbose_println,
+    verbose_println, very_verbose_println, DEBUG_SYMBOLS,
 };
 use colorize::AnsiColor;
 use constant::NAME;
@@ -161,9 +161,9 @@ pub enum LabelLocation {
 pub struct Label {
     pub name: String,
     resolved: Option<usize>,
-    // pub is_relative_to_ram_base: bool,
     pub label_location: LabelLocation, // data_type: InterType,
-                                       // size: usize,
+    // pub offset_multiplier: usize,
+    pub is_final: bool,
 }
 impl fmt::Display for Label {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -171,9 +171,15 @@ impl fmt::Display for Label {
             Some(address) => format!("resolved [ {} ]", address.to_string()),
             None => "unresolved".to_string(),
         };
+        let status = if self.is_final {
+            format!("[ final ]")
+        } else {
+            // format!("[ offset multiplier {} ]", self.offset_multiplier)
+            "".to_string()
+        };
         write!(
             f,
-            "[ {} ]::[ {} ]::[ {:?} ]",
+            "[ {} ]::[ {} ]::[ {:?} ]::{status}",
             self.name, resolved, self.label_location
         )
     }
@@ -192,12 +198,15 @@ impl Label {
             false
         }
     }
-    pub fn new(name: &str, location: LabelLocation) -> Self {
+    pub fn new(name: &str, location: LabelLocation, is_relative: bool) -> Self {
+        // let offset_multiplier = if is_relative { 1 } else { 0 };
         Self {
             name: name.to_string(),
             resolved: None,
             // is_relative_to_ram_base: false,
             label_location: location,
+            // offset_multiplier,
+            is_final: false,
         }
     }
     pub fn resolve(&mut self, address: usize) {
@@ -217,18 +226,43 @@ impl Label {
             }),
         }
     }
-    pub fn shift(&mut self, offset: usize) -> Result<(), AssemblyError> {
-        self.resolved = if let Some(deref_addr) = self.resolved {
-            let relative = deref_addr + offset;
-            Some(relative)
+    // pub fn shift(&mut self, offset: usize) -> Result<(), AssemblyError> {
+    //     if self.is_relative {
+    //         if let Some(deref_addr) = self.resolved {
+    //             let relative = deref_addr + offset;
+    //             self.resolve(relative);
+    //             // verbose_println!("shifted {} to {:?} {relative}", self.name, self.resolved);
+    //         } else {
+    //             return Err(AssemblyError {
+    //                 code: AssemblyErrorCode::UnresolvedLabel,
+    //                 reason: format!("attempted to shift unresolved label [ {} ]  ", self.name),
+    //                 metadata: None,
+    //             });
+    //         };
+    //     }
+    //     Ok(())
+    // }
+    //
+
+    pub fn apply_offset(&mut self, base: usize) -> Result<(), AssemblyError> {
+        let current_value = if let Some(v) = self.resolved {
+            v
         } else {
             return Err(AssemblyError {
                 code: AssemblyErrorCode::UnresolvedLabel,
-                reason: format!("attempted to shift unresolved label [ {} ]  ", self.name),
+                reason: format!(
+                    "attempted to apply relative offset to label [ {} ] which is not resolved",
+                    self.name
+                ),
                 metadata: None,
             });
         };
-
+        let new_value = current_value + (base + 1); // off by one?
+        verbose_println!(
+            "applied offset to {} {current_value} -> {new_value}",
+            self.name
+        );
+        self.resolved = Some(new_value);
         Ok(())
     }
 }
@@ -518,39 +552,47 @@ impl DebugPartition {
     //  key value pairs (8 bytes program counter : (2 bytes length of string, string))
     /// generate data partition image
     pub fn to_bytes(&self) -> Vec<u8> {
-        // seperate files
-        let mut files: HashMap<String, Vec<MetaDataDebugEntry>> = HashMap::new();
-        for (program_counter, metadata) in &self.map {
-            let entry = MetaDataDebugEntry::new(metadata, *program_counter);
-            let file = files.entry(metadata.file.clone()).or_insert_with(Vec::new);
-            // file.insert(*program_counter, value);
-            file.push(entry);
-        }
-        let file_count = files.len();
-        let mut files_image: Vec<u8> = vec![];
-        for (file_name, contents) in files {
-            let mut file_image: Vec<u8> = vec![];
-            for entry in contents {
-                file_image.extend_from_slice(&entry.to_bytes());
+        let include_debug = unsafe { DEBUG_SYMBOLS };
+        if include_debug {
+            // seperate files
+            let mut files: HashMap<String, Vec<MetaDataDebugEntry>> = HashMap::new();
+            for (program_counter, metadata) in &self.map {
+                let entry = MetaDataDebugEntry::new(metadata, *program_counter);
+                let file = files.entry(metadata.file.clone()).or_insert_with(Vec::new);
+                // file.insert(*program_counter, value);
+                file.push(entry);
             }
-            let file_length_bytes =
-                &file_image.len().to_le_bytes()[0..DEBUG_PARTITION_FILE_LENGTH_SIZE];
-            let file_name_bytes = file_name.as_bytes();
-            files_image.extend_from_slice(file_length_bytes);
-            files_image.extend_from_slice(
-                &file_name_bytes.len().to_le_bytes()[0..DEBUG_PARTITION_TEXT_LENGTH_SIZE],
-            );
-            files_image.extend_from_slice(file_name_bytes);
-            files_image.extend_from_slice(&file_image);
+            let file_count = files.len();
+            let mut files_image: Vec<u8> = vec![];
+            for (file_name, contents) in files {
+                let mut file_image: Vec<u8> = vec![];
+                for entry in contents {
+                    file_image.extend_from_slice(&entry.to_bytes());
+                }
+                let file_length_bytes =
+                    &file_image.len().to_le_bytes()[0..DEBUG_PARTITION_FILE_LENGTH_SIZE];
+                let file_name_bytes = file_name.as_bytes();
+                files_image.extend_from_slice(file_length_bytes);
+                files_image.extend_from_slice(
+                    &file_name_bytes.len().to_le_bytes()[0..DEBUG_PARTITION_TEXT_LENGTH_SIZE],
+                );
+                files_image.extend_from_slice(file_name_bytes);
+                files_image.extend_from_slice(&file_image);
+            }
+
+            let debug_partition_size = DEBUG_PARTITION_FILE_LENGTH_SIZE + files_image.len();
+            let mut image: Vec<u8> = vec![];
+            // let debug_partition_size_bytes =
+            //     &debug_partition_size.to_le_bytes()[0..DEBUG_PARTITION_LENGTH_SIZE];
+            // verbose_println!("debug partition size {debug_partition_size_bytes:?}");
+            // image.extend_from_slice(&debug_partition_size_bytes);
+            image.extend_from_slice(&file_count.to_le_bytes()[0..DEBUG_PARTITION_FILE_LENGTH_SIZE]);
+            image.extend_from_slice(&files_image);
+            image
+        } else {
+            let image: Vec<u8> = vec![];
+            image
         }
-
-        let data_partition_size = DEBUG_PARTITION_FILE_LENGTH_SIZE + files_image.len();
-        let mut image: Vec<u8> = vec![];
-
-        image.extend_from_slice(&data_partition_size.to_le_bytes()[0..DEBUG_PARTITION_LENGTH_SIZE]);
-        image.extend_from_slice(&file_count.to_le_bytes()[0..DEBUG_PARTITION_FILE_LENGTH_SIZE]);
-        image.extend_from_slice(&files_image);
-        image
     }
 }
 
@@ -571,9 +613,9 @@ impl MetaDataDebugEntry {
         let mut buffer: Vec<u8> = vec![];
         let location_bytes = &self.location.to_le_bytes()[0..DEBUG_PARTITION_PC_KEY_SIZE];
         buffer.extend_from_slice(location_bytes);
-
+        let line_bytes = &(self.line as u64).to_le_bytes();
+        buffer.extend_from_slice(line_bytes);
         let text_length_bytes = &self.text.len().to_le_bytes()[0..DEBUG_PARTITION_TEXT_LENGTH_SIZE];
-
         buffer.extend_from_slice(text_length_bytes);
         if !self.text.is_ascii() {
             very_verbose_println!("warning: non ascii character detected in source")

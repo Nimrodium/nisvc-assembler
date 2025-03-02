@@ -1,6 +1,6 @@
 use assembler::Assembler;
 use colorize::AnsiColor;
-use constant::{DEFAULT_BINARY_NAME, NAME, SIGNATURE};
+use constant::{DEFAULT_BINARY_NAME, NAME};
 use data::{AssemblyError, AssemblyErrorCode};
 use std::{fs::File, io::Write, process::exit};
 
@@ -10,6 +10,7 @@ mod data;
 mod package;
 mod parser;
 
+static mut DEBUG_SYMBOLS: bool = false;
 static mut VERBOSE_FLAG: bool = false;
 static mut VERY_VERBOSE_FLAG: bool = false;
 static mut VERY_VERY_VERBOSE_FLAG: bool = false;
@@ -138,6 +139,7 @@ fn main() {
                 VERY_VERY_VERBOSE_FLAG = true;
                 very_very_verbose_println!("verbose print level 3 enabled")
             },
+            "-d" | "--debug-symbols" => unsafe { DEBUG_SYMBOLS = true },
             "-h" | "--help" => help(),
             f if f.starts_with("--") || f.starts_with("-") => {
                 println!(
@@ -150,6 +152,7 @@ fn main() {
                 );
                 help()
             }
+
             _ => input_files.push(arg),
         }
     }
@@ -207,11 +210,5 @@ fn main() {
         Ok(()) => (),
         Err(err) => handle_fatal_assembly_err(err),
     }
-    verbose_println!("wrote binary file {output_file}");
-
-    //prepare entrypoint
-    // let entry_point = match assembler.entry_point.as_ref().unwrap().dereference() {
-    //     Ok(address) => address,
-    //     Err(err) => handle_fatal_assembly_err(err),
-    // } as u64;
+    println!("wrote binary file {output_file}");
 }

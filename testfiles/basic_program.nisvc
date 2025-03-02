@@ -1,18 +1,20 @@
 .entry
     !start
 .data;
-    alias1 equ $10
-    alias2 equ $1*($!alias1+$b01)
+    //alias1 equ $10
+    //alias2 equ $1*($!alias1+$b01)
 
-    reserved res 8 $2
-    defined def 16 $1,$xff,$1
-    hello_world str "hello world",$x0a
-    hello_world_len equ . - $!hello_world
+    //reserved res 8 $2
+    // defined def 8 $1,$2,$3,$4,$5,$6,$7,$8
+    //hello_world str "hello world",$x0a
+    //hello_world_len equ . - $!hello_world
 
-    duplicate dup 8 $10:$xfe
+    // duplicate dup 8 $7:$xfe
+    test dup 8 $8:$x1
+
 .program;
     !start
-    add r1,r2,r3
-    movim r1, @!hello_world // r1 = pointer to start of string
-    movim r2, @!hello_world_len // r2 = length of string
-    jmp $!start
+    // add r1,r2,r3
+    //movim r1, @!hello_world // r1 = pointer to start of string
+    //movim r2, @!hello_world_len // r2 = length of string
+    // jmp $!start

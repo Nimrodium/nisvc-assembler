@@ -1,4 +1,4 @@
-use std::{fs::File, io::Read};
+use std::{fs::File, io::Read, ops::Index};
 
 use crate::{
     constant::{
@@ -58,6 +58,7 @@ impl Assembler {
                 self.entry_point = Some(Label::new(
                     &entry_point_label.unwrap(),
                     LabelLocation::Program,
+                    false,
                 ));
             } else {
                 return Err(AssemblyError {
@@ -118,13 +119,6 @@ impl Assembler {
             });
         };
 
-        // very_verbose_println!("program labels: {program_labels:?}");
-        // self.labels.extend_from_labels_slice(&program_labels);
-        // let program_labels = Labels::new();
-        // program_labels.
-        // self.program.as_ref().unwrap().labels;
-        //
-
         self.program.as_mut().unwrap().resolve_program_addresses()?;
         if let Some(data) = &mut self.data {
             data.shift_addresses(MMIO_ADDRESS_SPACE + program_length)?
@@ -172,12 +166,15 @@ impl Assembler {
 
         // package into NISVC Executable Format Binary Image
         let mut image: Vec<u8> = vec![];
+        let data_length = data_image.len();
+        verbose_println!("data image length : {}", data_length);
 
-        let data_length_bytes = (self.data.as_ref().unwrap().data_image.len() as u64).to_le_bytes();
+        let data_length_bytes = ((data_length) as u64).to_le_bytes();
         let program_length_bytes =
-            (self.program.as_ref().unwrap().size.unwrap() as u64).to_le_bytes();
+            ((self.program.as_ref().unwrap().size.unwrap() + OPCODE_BYTES) as u64).to_le_bytes();
         let entry_point_bytes =
             (self.entry_point.as_ref().unwrap().dereference()? as u64).to_le_bytes();
+        let debug_image_length_bytes = debug_image.len().to_le_bytes();
         let mut end_of_execution_code: Vec<u8> = vec![];
         for _ in 0..OPCODE_BYTES {
             end_of_execution_code.push(0xFF);
@@ -187,12 +184,28 @@ impl Assembler {
         image.extend_from_slice(&program_length_bytes);
         image.extend_from_slice(&data_length_bytes);
         image.extend_from_slice(&entry_point_bytes);
-
+        image.extend_from_slice(&debug_image_length_bytes);
         // data
         image.extend_from_slice(&program_code);
         image.extend_from_slice(&end_of_execution_code);
+
         image.extend_from_slice(data_image);
         image.extend_from_slice(&debug_image);
+        let header = SIGNATURE.len() + (8 * 4);
+        let eoe_loc = header + program_code.len();
+        let end_of_exec_align_check = image.get(eoe_loc);
+        if end_of_exec_align_check.is_some() {
+            if *end_of_exec_align_check.unwrap() != 0xFF {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::UnexpectedError,
+                    reason: format!(
+                        "could not find end of exec byte at [ {eoe_loc} ], read [ {:#x} ]",
+                        end_of_exec_align_check.unwrap()
+                    ),
+                    metadata: None,
+                });
+            }
+        }
         Ok(image)
     }
 
