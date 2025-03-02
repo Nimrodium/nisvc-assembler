@@ -33,13 +33,9 @@ pub enum AssemblyErrorCode {
     ObjectNotResolved,
     UndefinedLabel,
     ObjectTooLarge,
-    LiteralDefinedAsAddress,
     InvalidRegisterName,
-    EmptyLiteral,
     InvalidImmediate,
-    InvalidAddress,
     CLIArgParseError,
-    NotImplemented,
     SourceFileInitializationError,
     SyntaxError,
     UnresolvedLabel,
@@ -120,16 +116,16 @@ impl Labels {
     pub fn insert_label(&mut self, label: &Label) {
         self.table.insert(label.name.clone(), label.clone());
     }
-    pub fn extend_from_self(&mut self, labels: &Labels) {
-        // self.table.extend(labels.table)
-        self.table
-            .extend(labels.table.iter().map(|(k, v)| (k.clone(), v.clone())));
-    }
-    pub fn extend_from_labels_slice(&mut self, slice: &[Label]) {
-        for label in slice {
-            self.insert_label(label);
-        }
-    }
+    // pub fn extend_from_self(&mut self, labels: &Labels) {
+    //     // self.table.extend(labels.table)
+    //     self.table
+    //         .extend(labels.table.iter().map(|(k, v)| (k.clone(), v.clone())));
+    // }
+    // pub fn extend_from_labels_slice(&mut self, slice: &[Label]) {
+    //     for label in slice {
+    //         self.insert_label(label);
+    //     }
+    // }
     pub fn get_label(&self, label: &str) -> Result<&Label, AssemblyError> {
         match self.table.get(label) {
             Some(lbl) => Ok(lbl),
@@ -198,7 +194,7 @@ impl Label {
             false
         }
     }
-    pub fn new(name: &str, location: LabelLocation, is_relative: bool) -> Self {
+    pub fn new(name: &str, location: LabelLocation) -> Self {
         // let offset_multiplier = if is_relative { 1 } else { 0 };
         Self {
             name: name.to_string(),
@@ -580,7 +576,7 @@ impl DebugPartition {
                 files_image.extend_from_slice(&file_image);
             }
 
-            let debug_partition_size = DEBUG_PARTITION_FILE_LENGTH_SIZE + files_image.len();
+            // let debug_partition_size = DEBUG_PARTITION_FILE_LENGTH_SIZE + files_image.len();
             let mut image: Vec<u8> = vec![];
             // let debug_partition_size_bytes =
             //     &debug_partition_size.to_le_bytes()[0..DEBUG_PARTITION_LENGTH_SIZE];
@@ -627,4 +623,4 @@ impl MetaDataDebugEntry {
 const DEBUG_PARTITION_PC_KEY_SIZE: usize = 2; //
 const DEBUG_PARTITION_TEXT_LENGTH_SIZE: usize = 2;
 const DEBUG_PARTITION_FILE_LENGTH_SIZE: usize = 8;
-const DEBUG_PARTITION_LENGTH_SIZE: usize = 8;
+// const DEBUG_PARTITION_LENGTH_SIZE: usize = 8;

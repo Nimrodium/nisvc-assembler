@@ -1,11 +1,11 @@
-use std::{fs::File, io::Read, ops::Index};
+use std::{fs::File, io::Read};
 
 use crate::{
     constant::{
         COMMENT, DATA_MARKER, ENTRY_MARKER, MMIO_ADDRESS_SPACE, OPCODE_BYTES, PROGRAM_MARKER,
         SEPERATOR, SIGNATURE,
     },
-    data::{AssemblyError, AssemblyErrorCode, Label, LabelLocation, Labels, MetaData},
+    data::{AssemblyError, AssemblyErrorCode, Label, LabelLocation, MetaData},
     parser::{self, Data, IntermediateProgram},
     verbose_println, very_verbose_println, very_very_verbose_println,
 };
@@ -15,7 +15,7 @@ pub struct Assembler {
     tokenized_raw_program_source: Vec<MetaData>,
     pub program: Option<IntermediateProgram>,
     pub data: Option<Data>,
-    pub labels: Labels,
+    // pub labels: Labels,
     pub entry_point: Option<Label>,
 }
 
@@ -26,7 +26,7 @@ impl Assembler {
             tokenized_raw_program_source: vec![],
             program: None,
             data: None,
-            labels: Labels::new(),
+            // labels: Labels::new(),
             entry_point: None,
         }
     }
@@ -58,7 +58,6 @@ impl Assembler {
                 self.entry_point = Some(Label::new(
                     &entry_point_label.unwrap(),
                     LabelLocation::Program,
-                    false,
                 ));
             } else {
                 return Err(AssemblyError {

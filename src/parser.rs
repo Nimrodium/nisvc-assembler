@@ -5,7 +5,7 @@ use crate::{
     constant::{
         self, ABSOLUTE, ADDRESS_BYTES, ASSEMBLY_PTR, BINARY, COMMA, DATA_MARKER, DEC,
         DUP_SEPERATOR, ESCAPE, HEX, LABEL, MAGIC_RESERVED_MEM, MMIO_ADDRESS_SPACE, OPCODE_BYTES,
-        RELATIVE, SEPERATOR, SPACE, STR,
+        RELATIVE, SPACE, STR,
     },
     data::{
         get_smallest_byte_size, AssemblyError, AssemblyErrorCode, DebugPartition, InterType, Label,
@@ -213,22 +213,22 @@ impl IntermediateObject {
         // verbose_println!("resolved immediate {}",);
         Ok(())
     }
-    fn get_unresolved(&self) -> Result<String, AssemblyError> {
-        if let Some(str) = self.string.clone() {
-            Ok(str)
-        } else {
-            let resolved = if let Some(obj) = self.object {
-                obj
-            } else {
-                return Err(AssemblyError{code:AssemblyErrorCode::UnexpectedError,reason:format!("intermediate object of type {:?} is in an invalid trinary state. object and string are both None.",self.intertype),metadata:None,});
-            };
-            return Err(AssemblyError {
-                code: AssemblyErrorCode::ObjectAlreadyResolved,
-                reason: format!("{} already resolved", resolved),
-                metadata: None,
-            });
-        }
-    }
+    // fn get_unresolved(&self) -> Result<String, AssemblyError> {
+    //     if let Some(str) = self.string.clone() {
+    //         Ok(str)
+    //     } else {
+    //         let resolved = if let Some(obj) = self.object {
+    //             obj
+    //         } else {
+    //             return Err(AssemblyError{code:AssemblyErrorCode::UnexpectedError,reason:format!("intermediate object of type {:?} is in an invalid trinary state. object and string are both None.",self.intertype),metadata:None,});
+    //         };
+    //         return Err(AssemblyError {
+    //             code: AssemblyErrorCode::ObjectAlreadyResolved,
+    //             reason: format!("{} already resolved", resolved),
+    //             metadata: None,
+    //         });
+    //     }
+    // }
 
     fn to_bytes(&self) -> Result<Vec<u8>, AssemblyError> {
         let object = if let Some(obj) = self.object {
@@ -583,7 +583,7 @@ impl IntermediateProgram {
         let mut i = 0;
         for line in clean_program_src {
             if line.text.trim().starts_with(LABEL) {
-                let mut label = Label::new(&line.text.trim()[1..], LabelLocation::Program, false);
+                let mut label = Label::new(&line.text.trim()[1..], LabelLocation::Program);
                 label.resolve(program_head);
                 very_verbose_println!("found program label {label}");
                 self.labels.insert_label(&label)
@@ -734,7 +734,7 @@ impl Data {
             });
         };
         if label_name != "_" {
-            let mut label = Label::new(label_name, LabelLocation::Ram, true);
+            let mut label = Label::new(label_name, LabelLocation::Ram);
             label.resolve(self.data_image.len());
             self.labels.insert_label(&label);
             // label.is_relative_to_ram_base = true;
@@ -761,7 +761,7 @@ impl Data {
                 self.reserve_bytes(unit, rest)?
             }
             "equ" => {
-                let (immediate, offset_multiplier) = self.equate(instruction)?;
+                let (immediate, _) = self.equate(instruction)?;
                 let label = self.labels.get_mut_label(label_name)?;
                 label.resolve(immediate);
                 label.label_location = LabelLocation::Immediate;
@@ -939,7 +939,7 @@ impl Data {
     fn equate(&self, expr: &str) -> Result<(usize, usize), AssemblyError> {
         let mut resolved_expr = String::new();
         let mut token_buf = String::new();
-        let mut offset_multiplier: usize = 0;
+        // let mut offset_multiplier: usize = 0;
         let operations = ['+', '-', '*', '/', '%', ' ', '(', ')'];
         for char_token in expr.chars() {
             if operations.contains(&char_token) {
@@ -994,7 +994,7 @@ impl Data {
             }
         } as usize;
         verbose_println!("resolved {expr} -> {resolved_expr} -> {result} ");
-        Ok((result, offset_multiplier))
+        Ok((result, 0))
     }
 
     /// internal helper

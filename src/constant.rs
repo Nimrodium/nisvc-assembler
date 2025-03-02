@@ -1,11 +1,11 @@
 pub type Register = u64;
-pub const REGISTER_WIDTH: usize = size_of::<Register>();
+// pub const REGISTER_WIDTH: usize = size_of::<Register>();
 
 pub const NAME: &str = "nisvc-as";
 pub const REGISTER_BYTES: usize = 1;
 pub const OPCODE_BYTES: usize = 1;
 pub const ADDRESS_BYTES: usize = 8;
-pub const HEADER_LENGTH_ENTRIES_BYTES: usize = 8;
+// pub const HEADER_LENGTH_ENTRIES_BYTES: usize = 8;
 pub const MMIO_ADDRESS_SPACE: usize = 42;
 pub const SIGNATURE: &[u8] = b"NISVC-EF";
 pub const DEFAULT_BINARY_NAME: &str = "nisvc.out";

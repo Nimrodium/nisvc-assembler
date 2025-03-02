@@ -7,7 +7,6 @@ use std::{fs::File, io::Write, process::exit};
 mod assembler;
 mod constant;
 mod data;
-mod package;
 mod parser;
 
 static mut DEBUG_SYMBOLS: bool = false;
