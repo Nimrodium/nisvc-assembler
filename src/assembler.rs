@@ -230,16 +230,15 @@ fn clean_source(source: &str, file_name: &str) -> Vec<MetaData> {
             None => continue, // line was entirely comment
         }
         .trim();
-
-        let instructions_of_line: Vec<String> = line_no_comments
-            .split(SEPERATOR)
-            .map(|s| s.to_string())
-            .collect();
-
+        // TODO change this to ignore ; in strings
+        // let instructions_of_line: Vec<String> = line_no_comments
+        //     .split(SEPERATOR)
+        //     .map(|s| s.to_string())
+        //     .collect();
+        let instructions_of_line: Vec<String> = respectful_split_line(line_no_comments);
         for instruction in instructions_of_line {
             let clean_instruction = instruction.trim();
             if !clean_instruction.is_empty() {
-                very_very_verbose_println!("{clean_instruction}");
                 // clean_buf.push(clean_instruction.to_string());
                 let metadata = MetaData {
                     text: clean_instruction.to_string(),
@@ -251,6 +250,41 @@ fn clean_source(source: &str, file_name: &str) -> Vec<MetaData> {
         }
     }
     clean_buf
+}
+
+fn respectful_split_line(s: &str) -> Vec<String> {
+    let mut buffer: Vec<String> = vec![];
+    let mut c_buf: String = String::new();
+    let mut in_string = false;
+    for c in s.chars() {
+        match c {
+            '"' | '\'' => {
+                if in_string {
+                    in_string = false;
+                    c_buf.push(c);
+                } else {
+                    in_string = true;
+                    c_buf.push(c);
+                }
+            }
+            SEPERATOR => {
+                if in_string {
+                    c_buf.push(c);
+                } else {
+                    if !c_buf.is_empty() {
+                        buffer.push(c_buf.clone());
+                        c_buf.clear();
+                    }
+                }
+            }
+            _ => c_buf.push(c),
+        }
+    }
+    if !c_buf.is_empty() {
+        buffer.push(c_buf.clone());
+        c_buf.clear();
+    }
+    buffer
 }
 
 enum Section {
