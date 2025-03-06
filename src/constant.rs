@@ -15,7 +15,7 @@ pub const RELATIVE: char = '@';
 pub const ASSEMBLY_PTR: char = '.';
 pub const SEPERATOR: char = ';';
 pub const DUP_SEPERATOR: char = ':';
-pub const COMMENT: &str = "//";
+pub const COMMENT: &str = "#";
 
 pub const DATA_MARKER: &str = ".data";
 pub const PROGRAM_MARKER: &str = ".program";

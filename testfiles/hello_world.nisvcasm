@@ -38,7 +38,6 @@
         jifnz r3,$!loop // terminate loop if at end of string
     store r4,r7,r8 // refresh display
 
-
     !keep_alive
         load r15,r7,r14 // read event pump (just so the window stays responsive)
         jmp $!keep_alive

@@ -7,7 +7,7 @@ use crate::{
     },
     data::{AssemblyError, AssemblyErrorCode, Label, LabelLocation, MetaData},
     parser::{self, Data, IntermediateProgram},
-    verbose_println, very_verbose_println, very_very_verbose_println,
+    verbose_println, very_verbose_println,
 };
 
 pub struct Assembler {

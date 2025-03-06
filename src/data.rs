@@ -456,6 +456,17 @@ impl OpcodeTable {
                 OpcodeEntry::new(0x1a, 1, vec![InterType::Addr])?,
             ),
             ("ret".to_string(), OpcodeEntry::new(0x1b, 0, vec![])?),
+            (
+                "cache".to_string(),
+                OpcodeEntry::new(0x1c, 1, vec![InterType::Imm])?,
+            ),
+            ("restore".to_string(), OpcodeEntry::new(0x1d, 0, vec![])?),
+            // SPECIAL
+
+            // set breakpoint
+            ("breakpoint".to_string(), OpcodeEntry::new(0xfe, 0, vec![])?),
+            // manually define end_of_exec
+            ("haltexe".to_string(), OpcodeEntry::new(0xff, 0, vec![])?),
         ]);
         Ok(OpcodeTable { table })
     }
@@ -480,35 +491,43 @@ pub struct RegisterTable {
 }
 impl RegisterTable {
     pub fn build_table() -> Self {
-        let table: HashMap<String, usize> = HashMap::from([
-            ("r1".to_string(), 1),
-            ("r2".to_string(), 2),
-            ("r3".to_string(), 3),
-            ("r4".to_string(), 4),
-            ("r5".to_string(), 5),
-            ("r6".to_string(), 6),
-            ("r7".to_string(), 7),
-            ("r8".to_string(), 8),
-            ("r9".to_string(), 9),
-            ("r10".to_string(), 10),
-            ("r11".to_string(), 11),
-            ("r12".to_string(), 12),
-            ("r13".to_string(), 13),
-            ("r14".to_string(), 14),
-            ("r15".to_string(), 15),
-            ("r16".to_string(), 16),
-            ("r17".to_string(), 17),
-            ("r18".to_string(), 18),
-            ("r19".to_string(), 19),
-            ("r20".to_string(), 20),
-            ("pc".to_string(), 21),
-            ("sp".to_string(), 22),
-            ("o1".to_string(), 23),
-            ("o2".to_string(), 24),
-            ("o3".to_string(), 25),
-            ("o4".to_string(), 26),
-            ("o5".to_string(), 27),
-        ]);
+        // let table: HashMap<String, usize> = HashMap::from([
+        //     ("r1".to_string(), 1),
+        //     ("r2".to_string(), 2),
+        //     ("r3".to_string(), 3),
+        //     ("r4".to_string(), 4),
+        //     ("r5".to_string(), 5),
+        //     ("r6".to_string(), 6),
+        //     ("r7".to_string(), 7),
+        //     ("r8".to_string(), 8),
+        //     ("r9".to_string(), 9),
+        //     ("r10".to_string(), 10),
+        //     ("r11".to_string(), 11),
+        //     ("r12".to_string(), 12),
+        //     ("r13".to_string(), 13),
+        //     ("r14".to_string(), 14),
+        //     ("r15".to_string(), 15),
+        //     ("r16".to_string(), 16),
+        //     ("r17".to_string(), 17),
+        //     ("r18".to_string(), 18),
+        //     ("r19".to_string(), 19),
+        //     ("r20".to_string(), 20),
+        //     ("pc".to_string(), 21),
+        //     ("sp".to_string(), 22),
+        //     ("rsp".to_string(), 23),
+        // ]);
+        const GENERAL_REGISTER_COUNT: usize = 20;
+        const REGISTER_PREFIX: char = 'r';
+
+        let mut table: HashMap<String, usize> = HashMap::new();
+        for n in 0..=GENERAL_REGISTER_COUNT {
+            table.insert(REGISTER_PREFIX.to_string() + n.to_string().as_str(), n);
+        }
+
+        table.insert("pc".to_string(), GENERAL_REGISTER_COUNT + 1);
+        table.insert("sp".to_string(), GENERAL_REGISTER_COUNT + 2);
+        table.insert("rsp".to_string(), GENERAL_REGISTER_COUNT + 3);
+        table.insert("null".to_string(), GENERAL_REGISTER_COUNT + 4);
         Self { table }
     }
     pub fn get_reg(&self, reg_str: &str) -> Result<usize, AssemblyError> {
