@@ -7,6 +7,7 @@ use std::{fs::File, io::Write, process::exit};
 mod assembler;
 mod constant;
 mod data;
+mod debug_symbols;
 mod parser;
 
 static mut DEBUG_SYMBOLS: bool = false;
@@ -93,6 +94,13 @@ fn help() -> ! {
     exit(0)
 }
 fn main() {
+    let table = crate::data::RegisterTable::build_table();
+    let r1b1_code = table.get_reg("r4q4").unwrap();
+    println!("{r1b1_code:#x}");
+    for entry in &table.table {
+        println!("{entry:x?}");
+    }
+
     let args: Vec<String> = std::env::args().collect();
 
     let mut output_file = DEFAULT_BINARY_NAME;

@@ -21,6 +21,8 @@
     #//movim r2,$0
     xor r2,r2,r2
     movim r1,$1
+    mov r1,null
+    breakpoint
     !keep_alive
         load r15,r1,r2 #// read event pump (just so the window stays responsive)
         jmp $!keep_alive

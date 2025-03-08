@@ -55,6 +55,11 @@ impl AssemblyError {
         self
     }
 }
+impl fmt::Debug for AssemblyError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_string())
+    }
+}
 impl fmt::Display for AssemblyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let string = format!(
@@ -486,11 +491,12 @@ impl OpcodeTable {
     }
 }
 
+pub const SUBREGISTER_COUNT: u8 = 14;
 pub struct RegisterTable {
-    table: HashMap<String, usize>,
+    pub table: HashMap<String, u8>,
 }
 impl RegisterTable {
-    pub fn build_table() -> Self {
+    pub fn _build_table() -> Self {
         // let table: HashMap<String, usize> = HashMap::from([
         //     ("r1".to_string(), 1),
         //     ("r2".to_string(), 2),
@@ -516,10 +522,10 @@ impl RegisterTable {
         //     ("sp".to_string(), 22),
         //     ("rsp".to_string(), 23),
         // ]);
-        const GENERAL_REGISTER_COUNT: usize = 20;
+        const GENERAL_REGISTER_COUNT: u8 = 20;
         const REGISTER_PREFIX: char = 'r';
 
-        let mut table: HashMap<String, usize> = HashMap::new();
+        let mut table: HashMap<String, u8> = HashMap::new();
         for n in 0..=GENERAL_REGISTER_COUNT {
             table.insert(REGISTER_PREFIX.to_string() + n.to_string().as_str(), n);
         }
@@ -530,8 +536,121 @@ impl RegisterTable {
         table.insert("null".to_string(), GENERAL_REGISTER_COUNT + 4);
         Self { table }
     }
+    pub fn build_table() -> Self {
+        let mut table: HashMap<String, u8> = HashMap::from([
+            ("null".to_string(), 0),
+            ("pc".to_string(), 1),
+            ("sp".to_string(), 2),
+            ("rsp".to_string(), 3),
+            ("r1".to_string(), 4),
+            ("r2".to_string(), 5),
+            ("r3".to_string(), 6),
+            ("r4".to_string(), 7),
+            ("r5".to_string(), 8),
+            ("r6".to_string(), 9),
+            ("r7".to_string(), 10),
+            ("r8".to_string(), 11),
+            ("r9".to_string(), 12),
+            ("r10".to_string(), 13),
+            ("r11".to_string(), 14),
+            ("r12".to_string(), 15),
+            ("r13".to_string(), 16),
+            ("r14".to_string(), 17),
+            ("r15".to_string(), 18),
+        ]);
+        for (name, code) in &table.clone() {
+            if *code < 4 {
+                continue;
+            }
+            let base = *code & 0x0F;
+            for sub_code in 0x00u8..=0x0eu8 {
+                let sub_name = name.to_owned()
+                    + match sub_code {
+                        0x00 => "f",
+                        0x01 => "b1",
+                        0x02 => "b2",
+                        0x03 => "b3",
+                        0x04 => "b4",
+                        0x05 => "b5",
+                        0x06 => "b6",
+                        0x07 => "b7",
+                        0x08 => "b8",
+                        0x09 => "q1",
+                        0x0a => "q2",
+                        0x0b => "q3",
+                        0x0c => "q4",
+                        0x0d => "h1",
+                        0x0e => "h2",
+                        _ => unreachable!(),
+                    };
+                let shifted_sub_code = sub_code << 4;
+                let new_code = shifted_sub_code | base;
+                // println!(
+                //     "{name}:{code:#x}\n{sub_name}:{sub_code:#x}\n{new_code:#x} = {shifted_sub_code:#x}|{base:#x}\n"
+                // );
+                table.insert(sub_name, new_code);
+            }
+        }
+        Self { table }
+    }
+
+    fn window_str_to_subcode(name: &str) -> Result<u8, AssemblyError> {
+        let sub_code = match name.to_ascii_lowercase().as_str() {
+            "f" => 0x00,
+            "b1" => 0x01,
+            "b2" => 0x02,
+            "b3" => 0x03,
+            "b4" => 0x04,
+            "b5" => 0x05,
+            "b6" => 0x06,
+            "b7" => 0x07,
+            "b8" => 0x08,
+            "q1" => 0x09,
+            "q2" => 0x0a,
+            "q3" => 0x0b,
+            "q4" => 0x0c,
+            "h1" => 0x0d,
+            "h2" => 0x0e,
+            _ => {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::SyntaxError,
+                    reason: format!("{name} is an invalid subregister code"),
+                    metadata: None,
+                })
+            }
+        };
+        Ok(sub_code)
+    }
+
+    fn window_subcode_to_str(sub_code: &u8) -> Result<&str, AssemblyError> {
+        let name = match sub_code {
+            0x00 => "f",
+            0x01 => "b1",
+            0x02 => "b2",
+            0x03 => "b3",
+            0x04 => "b4",
+            0x05 => "b5",
+            0x06 => "b6",
+            0x07 => "b7",
+            0x08 => "b8",
+            0x09 => "q1",
+            0x0a => "q2",
+            0x0b => "q3",
+            0x0c => "q4",
+            0x0d => "h1",
+            0x0e => "h2",
+            _ => {
+                return Err(AssemblyError {
+                    code: AssemblyErrorCode::SyntaxError,
+                    reason: format!("{sub_code} is an invalid subregister code"),
+                    metadata: None,
+                })
+            }
+        };
+        Ok(name)
+    }
     pub fn get_reg(&self, reg_str: &str) -> Result<usize, AssemblyError> {
-        let reg_id = match self.table.get(reg_str) {
+        let reg_id = match self.table.get(reg_str.to_ascii_lowercase().as_str()) {
             Some(id) => id,
             None => {
                 return Err(AssemblyError {
@@ -541,7 +660,7 @@ impl RegisterTable {
                 })
             }
         };
-        Ok(*reg_id)
+        Ok(*reg_id as usize)
     }
 }
 
