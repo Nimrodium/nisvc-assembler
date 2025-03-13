@@ -1,9 +1,11 @@
+use arg_parser::{FlagArg, ParsedCLIArgs};
 use assembler::Assembler;
 use colorize::AnsiColor;
 use constant::{DEFAULT_BINARY_NAME, NAME};
 use data::{AssemblyError, AssemblyErrorCode};
 use std::{fs::File, io::Write, process::exit};
 
+mod arg_parser;
 mod assembler;
 mod constant;
 mod data;
@@ -11,9 +13,9 @@ mod debug_symbols;
 mod parser;
 
 static mut DEBUG_SYMBOLS: bool = false;
-static mut VERBOSE_FLAG: bool = false;
-static mut VERY_VERBOSE_FLAG: bool = false;
-static mut VERY_VERY_VERBOSE_FLAG: bool = false;
+static mut VERBOSE_FLAG: usize = 0;
+// static mut VERY_VERBOSE_FLAG: bool = false;
+// static mut VERY_VERY_VERBOSE_FLAG: bool = false;
 
 // will add line number later maybe
 fn handle_fatal_assembly_err(err: AssemblyError) -> ! {
@@ -23,15 +25,14 @@ fn handle_fatal_assembly_err(err: AssemblyError) -> ! {
 
 fn _verbose_println(msg: &str) {
     unsafe {
-        if VERBOSE_FLAG {
+        if VERBOSE_FLAG >= 1 {
             println!("{NAME}: {} {}", "verbose:".yellow(), msg)
         }
     }
 }
-
 fn _very_verbose_println(msg: &str) {
     unsafe {
-        if VERY_VERBOSE_FLAG {
+        if VERBOSE_FLAG >= 2 {
             println!("{NAME}: {} {}", "very-verbose:".yellow(), msg)
         }
     }
@@ -39,7 +40,7 @@ fn _very_verbose_println(msg: &str) {
 
 fn _very_very_verbose_println(msg: &str) {
     unsafe {
-        if VERY_VERY_VERBOSE_FLAG {
+        if VERBOSE_FLAG >= 3 {
             println!("{NAME}: {} {}", "very-very-verbose:".yellow(), msg)
         }
     }
@@ -93,76 +94,38 @@ fn help() -> ! {
     );
     exit(0)
 }
+
 fn main() {
     let table = crate::data::RegisterTable::build_table();
-    let r1b1_code = table.get_reg("r4q4").unwrap();
-    println!("{r1b1_code:#x}");
-    for entry in &table.table {
-        println!("{entry:x?}");
-    }
 
-    let args: Vec<String> = std::env::args().collect();
-
+    let cli_args: Vec<String> = std::env::args().collect();
+    let flags = &[
+        FlagArg::new("output", 'o', 1),
+        FlagArg::new("help", 'h', 0),
+        FlagArg::new("verbose", 'v', 0),
+    ];
+    let flag_definitions: arg_parser::Flags = arg_parser::Flags::new(flags);
+    let parsed_args = match ParsedCLIArgs::parse_arguments(&flag_definitions, &cli_args) {
+        Ok(args) => args,
+        Err(why) => handle_fatal_assembly_err(AssemblyError {
+            code: AssemblyErrorCode::CLIArgParseError,
+            reason: why,
+            metadata: None,
+        }),
+    };
+    println!("{parsed_args:#?}");
+    let input_files = parsed_args.raw;
     let mut output_file = DEFAULT_BINARY_NAME;
-    let mut skips = 1;
-    let mut input_files: Vec<&String> = vec![];
-    for (i, arg) in args.iter().enumerate() {
-        if skips > 0 {
-            skips -= 1;
-            continue;
-        }
-        match arg.as_str() {
-            "-o" | "--output" => {
-                output_file = match args.get(i + 1) {
-                    Some(file_name) => file_name,
-                    None => handle_fatal_assembly_err(AssemblyError {
-                        code: AssemblyErrorCode::CLIArgParseError,
-                        reason: format!("missing filename after '{arg}'"),
-                        metadata: None,
-                    }),
-                };
-                // verbose_println!("output file set to {output_file}");
-                skips += 1;
-            }
-            "-v" | "--verbose" => unsafe {
-                if VERBOSE_FLAG == true {
-                    handle_fatal_assembly_err(AssemblyError {
-                        code: AssemblyErrorCode::CLIArgParseError,
-                        reason: format!("verbose flag set twice'{arg}'"),
-                        metadata: None,
-                    })
-                }
-                VERBOSE_FLAG = true;
-                verbose_println!("verbose print level 1 enabled")
-            },
-            "-vv" | "--very-verbose" => unsafe {
-                VERY_VERBOSE_FLAG = true;
-                VERBOSE_FLAG = true;
-                very_verbose_println!("verbose print level 2 enabled")
-            },
-            "-vvv" | "--very-very-verbose" => unsafe {
-                VERBOSE_FLAG = true;
-                VERY_VERBOSE_FLAG = true;
-                VERY_VERY_VERBOSE_FLAG = true;
-                very_very_verbose_println!("verbose print level 3 enabled")
-            },
-            "-d" | "--debug-symbols" => unsafe { DEBUG_SYMBOLS = true },
-            "-h" | "--help" => help(),
-            f if f.starts_with("--") || f.starts_with("-") => {
-                println!(
-                    "{}",
-                    AssemblyError {
-                        code: AssemblyErrorCode::CLIArgParseError,
-                        reason: format!("unrecognized flag :: {f}"),
-                        metadata: None,
-                    }
-                );
-                help()
-            }
-
-            _ => input_files.push(arg),
+    let mut verbosity = 0;
+    for arg in parsed_args.flags {
+        match arg.name {
+            "output" => output_file = arg.data[0],
+            "help" => help(),
+            "verbose" => verbosity += 1,
+            _ => panic!("invalid flag snuck past parser"),
         }
     }
+    unsafe { VERBOSE_FLAG = verbosity }
     verbose_println!("output file: {output_file}");
     // println!("g");
     if input_files.len() < 1 {

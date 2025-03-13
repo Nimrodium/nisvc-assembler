@@ -41,8 +41,7 @@
         sub r6,r7,r1 // r6 is chars left
         jifnz r6,$!_std_write_loop
     movim r1,$2
-    s
-    nisvc-system: 0435: output: pc -> 94tore r5,r5,r1 // refresh display
+    store r5,r5,r1 // refresh display
     // movim r1,$88 // offset traversed
 
     //add sp,sp,r1 // move sp back to top of stack

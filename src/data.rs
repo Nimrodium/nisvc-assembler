@@ -304,7 +304,7 @@ impl OpcodeTable {
                 OpcodeEntry::new(0x01, 2, vec![InterType::Reg, InterType::Reg])?,
             ),
             (
-                "movim".to_string(),
+                "ldi".to_string(),
                 OpcodeEntry::new(0x02, 2, vec![InterType::Reg, InterType::Imm])?,
             ),
             (
