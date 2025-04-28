@@ -106,11 +106,14 @@ pub enum Token {
     Dash(Lexeme),
     Star(Lexeme),
     Slash(Lexeme),
+    Percent(Lexeme),
     OpenParen(Lexeme),
     ClosedParen(Lexeme),
     OpenBracket(Lexeme),
     ClosedBracket(Lexeme),
     SemiColon(Lexeme),
+    Comma(Lexeme),
+    Dot(Lexeme),
     EOF(Lexeme),
 }
 
@@ -127,12 +130,15 @@ impl Token {
             Token::Dash(lexeme) => lexeme,
             Token::Star(lexeme) => lexeme,
             Token::Slash(lexeme) => lexeme,
+            Token::Percent(lexeme) => lexeme,
             Token::OpenParen(lexeme) => lexeme,
             Token::ClosedParen(lexeme) => lexeme,
             Token::OpenBracket(lexeme) => lexeme,
             Token::ClosedBracket(lexeme) => lexeme,
             Token::SemiColon(lexeme) => lexeme,
             Token::EOF(lexeme) => lexeme,
+            Token::Comma(lexeme) => lexeme,
+            Token::Dot(lexeme) => lexeme,
         }
     }
 }
@@ -246,6 +252,18 @@ pub fn tokenize(source: &Source) -> Result<Vec<Token>, AssembleError> {
                             token_column_start,
                             *fd,
                         ))),
+                        ',' => tokens.push(Token::Comma(Lexeme::new(
+                            ",",
+                            line,
+                            token_column_start,
+                            *fd,
+                        ))),
+                        '.' => {
+                            tokens.push(Token::Dot(Lexeme::new(".", line, token_column_start, *fd)))
+                        }
+                        '%' => {
+                            tokens.push(Token::Dot(Lexeme::new("%", line, token_column_start, *fd)))
+                        }
                         '0'..='9' => {
                             return Err(AssembleError::new(format!("invalid word"))
                                 .attach_lexeme(&Lexeme::new(&lexeme_buffer, line, column, *fd))
