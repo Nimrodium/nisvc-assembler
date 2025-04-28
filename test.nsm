@@ -1,0 +1,3 @@
+:program
+    ldi r1,$1
+    cpy r2,r1
