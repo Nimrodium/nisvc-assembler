@@ -1,4 +1,4 @@
-use std::{collections::HashMap, iter::Peekable, vec};
+use std::{collections::HashMap, iter::Peekable, mem::transmute, vec};
 
 use crate::{
     tokenizer::{Lexeme, Source, Token},
@@ -14,11 +14,12 @@ macro_rules! invalid_token_err {
 }
 
 type RegHandle = u8;
-enum Label {
+#[derive(Debug)]
+pub enum Label {
     Resolved(u64, bool),
     Unresolved(String, bool),
 }
-
+#[derive(Debug)]
 pub enum Instruction {
     Nop,
     Cpy {
@@ -576,7 +577,7 @@ enum ParserSectionState {
 pub struct Assembler {
     labels: HashMap<String, (u64, bool)>,
     program_intermediate: Vec<Instruction>,
-    data_intermediate: Vec<u8>,
+    data: Vec<u8>,
 }
 
 enum Section {
@@ -587,15 +588,43 @@ enum Section {
     EOF,
 }
 
+enum WordSize {
+    B1,
+    B2,
+    B4,
+    B8,
+    F8,
+}
+impl WordSize {
+    fn from_token(token: Token) -> Result<Self, AssembleError> {
+        match token {
+            Token::KeyWord(lexeme) => match lexeme.s.to_lowercase().as_str() {
+                "b1" => Ok(Self::B1),
+                "b2" => Ok(Self::B2),
+                "b4" => Ok(Self::B4),
+                "b8" => Ok(Self::B8),
+                "f8" => Ok(Self::B8),
+                _ => {
+                    let msg = format!("invalid byte size `{}`", lexeme.s);
+                    Err(AssembleError::new(msg).attach_lexeme(&lexeme))
+                }?,
+            },
+            _ => invalid_token_err!("invalid byte size `{}`", token)?,
+        }
+    }
+}
+
 impl Assembler {
     pub fn assemble(tokens: Vec<Token>) -> Result<(u64, Vec<u8>, Vec<u8>, Vec<u8>), AssembleError> {
-        let assembler = Self::parse(tokens)?;
+        let mut assembler = Self::parse(tokens)?;
+        assembler.resolve()?;
         todo!()
     }
 
     fn parse(tokens: Vec<Token>) -> Result<Self, AssembleError> {
         let mut stream = tokens.into_iter().peekable();
         let mut labels: HashMap<String, (u64, bool)> = HashMap::new();
+        let mut data: Vec<u8> = Vec::new();
         let mut entry_point_label: String;
         let mut program_intermediate: Option<Vec<Instruction>> = None;
         loop {
@@ -610,17 +639,29 @@ impl Assembler {
                     program_intermediate = Some(program);
                 }
                 Token::DATA(_) => {
-                    let (data_img, labels) = Self::parse_data(&mut stream)?;
-                    todo!()
+                    Self::parse_data_reimpl(&mut stream, &mut labels, &mut data)?;
                 }
                 Token::ENTRYPOINT(_) => {
                     let (label, address) = Self::parse_entry(&mut stream)?;
                     todo!()
                 }
-                _ => unreachable!(),
+                Token::EOS(_) => continue,
+                _ => {
+                    println!("panic on `{token:?}`");
+                    panic!()
+                }
             }
         }
-        todo!()
+        println!("{program_intermediate:?}");
+        Ok(Self {
+            labels,
+            program_intermediate: if let Some(p) = program_intermediate {
+                p
+            } else {
+                return Err(AssembleError::new("no program defined".to_string()));
+            },
+            data,
+        })
     }
 
     fn parse_entry(
@@ -635,18 +676,7 @@ impl Assembler {
         let mut program_labels: Vec<(String, u64)> = Vec::new();
         let mut pc: u64 = 0;
         loop {
-            let token = match tokens.peek().unwrap() {
-                Token::EOF(_) => break,
-                Token::DATA(_) => break,
-                Token::ENTRYPOINT(_) => break,
-                Token::PROGRAM(lexeme) => {
-                    return Err(AssembleError::new(
-                        "unexpected program header inside program section".to_string(),
-                    )
-                    .attach_lexeme(lexeme))
-                }
-                _ => tokens.next().unwrap(),
-            };
+            let token = tokens.next().unwrap();
             match token {
                 Token::KeyWord(lexeme) => {
                     if lexeme.s.starts_with('!') {
@@ -657,7 +687,7 @@ impl Assembler {
                         program.push(instr);
                     }
                 }
-
+                Token::EOS(_) => break,
                 // this is incredibly gross
                 _ => {
                     let lexeme = token.get_lexeme();
@@ -669,174 +699,181 @@ impl Assembler {
                 }
             }
         }
-        todo!()
+        Ok((program, program_labels))
     }
 
-    // match token {
-    //     Token::KeyWord(lexeme) => {
-    //         match lexeme.s.as_str() {
-    //             // def b8 [$1,$2,$3,$4,$5,$6,$7,$8,$10]
-    //             "def" => state = DataState::Def,
-    //             // set b8 [$0;10]
-    //             "set" => state = DataState::Def,
-    //             // equ $1
-    //             "equ" => state = DataState::Equ,
-    //             // str "Hello, World!"
-    //             "str" => state = DataState::Str,
-    //             _ => {
-    //                 return Err(AssembleError::new(format!(
-    //                     "unexpected data command `{}`",
-    //                     lexeme.s
-    //                 ))
-    //                 .attach_lexeme(&lexeme));
-    //             }
-    //         }
-    //     }
-    //     Token::EOF(_) | Token::PROGRAM(_) | Token::ENTRYPOINT(_) => break,
-    //     _ => {
-    //         let lexeme = token.get_lexeme();
-    //         return Err(AssembleError::new(format!(
-    //             "unexpected data command `{}`",
-    //             lexeme.s
-    //         ))
-    //         .attach_lexeme(lexeme));
-    //     }
-    // },
-    fn parse_data(
+    fn parse_data_reimpl(
         stream: &mut Peekable<vec::IntoIter<Token>>,
-    ) -> Result<(Vec<u8>, Vec<(String, u64)>), AssembleError> {
-        enum WordSize {
-            B8,
-            B16,
-            B32,
-            B64,
-            F64,
-        }
-
-        enum DataState {
-            Initial,
-            DefineLabel,
-            Def,
-            Set,
-            Equ,
-            Str,
-        }
-
-        let mut state = DataState::Initial;
-        let mut data_img: Vec<u8> = Vec::new();
-        let mut labels: HashMap<String, (u64, bool)> = HashMap::new();
-        let mut current_label: Option<(String, (u64, bool))> = None;
-
-        let mut dc: u64 = 0;
+        labels: &mut HashMap<String, (u64, bool)>,
+        data: &mut Vec<u8>,
+    ) -> Result<(), AssembleError> {
         loop {
             let token = stream.next().unwrap();
-            match state {
-                DataState::Initial => match token {
-                    Token::KeyWord(lexeme) => {
-                        state = DataState::DefineLabel;
-                        current_label = Some((lexeme.s, (dc, true)));
-                    }
-                    _ => invalid_token_err!("invalid data label name `{}`", token)?,
-                },
-                DataState::Def => {
-                    // enum DefState {
-                    //     Initial,
-                    //     Parsing(WordSize),
-                    // }
-                    let word_size_token = stream.next().unwrap();
-                    match word_size_token {
-                        Token::KeyWord(lexeme) => {
-                            let word_size = match lexeme.s.as_str() {
-                                "b8" => WordSize::B8,
-                                "b16" => WordSize::B16,
-                                "b32" => WordSize::B32,
-                                "b64" => WordSize::B64,
-                                "f64" => WordSize::F64,
-                                _ => {
-                                    let msg = format!("invalid word size `{}`", lexeme.s);
-                                    Err(AssembleError::new(msg).attach_lexeme(&lexeme))
-                                }?,
-                            };
-                        }
-                        _ => invalid_token_err!("invalid data label name `{}`", word_size_token)?,
-                    }
-                }
-                DataState::Set => todo!(),
-                DataState::Equ => {
-                    let token = stream.next().unwrap();
-                    let value = match token {
-                        Token::Constant(lexeme, offset) => {
-                            let value = parse_constant(&lexeme, offset)?;
-                            match value {
-                                Label::Resolved(value, offset) => value,
-                                Label::Unresolved(string, offset) => {
-                                    if let Some((v, offset)) = labels.get(&string) {
-                                        *v
-                                    } else {
-                                        let msg = format!("cannot resolve label `{}` labels must be declared before use",lexeme.s);
-                                        return Err(AssembleError::new(msg).attach_lexeme(&lexeme));
-                                    }
-                                }
+            match token {
+                Token::KeyWord(lexeme) => {
+                    let mut label: (String, (u64, bool)) = (lexeme.s, (data.len() as u64, true));
+                    let cmd_token = stream.next().unwrap();
+                    match cmd_token {
+                        Token::KeyWord(lexeme) => match lexeme.s.as_str() {
+                            "def" => Self::parse_def(stream, labels, data)?,
+                            "str" => Self::parse_str(stream, labels, data)?,
+                            "equ" => {
+                                Self::parse_equ(stream, labels, &mut label, data.len() as u64)?
                             }
-                        }
-                        Token::OpenParen(lexeme) => {
-                            // expr
-                            let expr = build_expression(dc, stream, &labels)?;
-                            let result = resolve_expression(expr);
-                            println!("expr result = {result}");
-                            result
-                        }
-                        _ => invalid_token_err!("non-constant value `{}`", token)?,
-                    };
-
-                    let mut cur_lbl = current_label.unwrap();
-                    cur_lbl.1 .1 = false;
-                    cur_lbl.1 .0 = value;
-                    current_label = Some(cur_lbl);
-                    state = DataState::Initial;
-                }
-                DataState::Str => {
-                    let string = todo!();
-                }
-                DataState::DefineLabel => {
-                    match token {
-                        Token::KeyWord(lexeme) => {
-                            match lexeme.s.as_str() {
-                                // def b8 [$1,$2,$3,$4,$5,$6,$7,$8,$10]
-                                "def" => state = DataState::Def,
-                                // set b8 [$0;10]
-                                "set" => state = DataState::Def,
-                                // equ $1
-                                "equ" => state = DataState::Equ,
-                                // str "Hello, World!"
-                                "str" => state = DataState::Str,
-                                _ => {
-                                    let msg = format!("unexpected data command `{}`", lexeme.s);
-                                    Err(AssembleError::new(msg).attach_lexeme(&lexeme))
-                                }?,
-                            }
-                        }
-                        Token::EOF(_) | Token::PROGRAM(_) | Token::ENTRYPOINT(_) => break,
-                        _ => invalid_token_err!("unexpected data command `{}`", token)?,
+                            "set" => Self::parse_set(stream, data)?,
+                            _ => {
+                                let msg = format!("data command not recognized `{}`", lexeme.s);
+                                Err(AssembleError::new(msg).attach_lexeme(&lexeme))
+                            }?,
+                        },
+                        _ => invalid_token_err!("expected data command `{}`", cmd_token)?,
                     }
+                    labels.insert(label.0, label.1);
                 }
+                Token::EOS(_) => break,
+                _ => invalid_token_err!("expected label declaration `{}`", token)?,
             }
         }
-        todo!()
-    }
-    fn build_data(tokens: &mut vec::IntoIter<Token>) {
-        todo!()
+        Ok(())
     }
 
-    fn resolve(&mut self) -> Result<(), AssembleError> {
-        todo!()
+    // returns bytes consumed
+    fn parse_def(
+        stream: &mut Peekable<vec::IntoIter<Token>>,
+        labels: &HashMap<String, (u64, bool)>,
+        data: &mut Vec<u8>,
+    ) -> Result<(), AssembleError> {
+        let word_size = WordSize::from_token(stream.next().unwrap())?;
+        let full_vec = {
+            let mut buf: Vec<u64> = Vec::new();
+            loop {
+                let token = stream.next().unwrap();
+                match token {
+                    Token::Constant(lexeme, expected_offset) => {
+                        buf.push(resolve_label(labels, &lexeme, expected_offset)?)
+                    }
+                    Token::OpenParen(_) => {
+                        let expr = build_expression(data.len() as u64, stream, labels)?;
+                        buf.push(resolve_expression(expr))
+                    }
+                    Token::SemiColon(_) => break,
+                    _ => invalid_token_err!("unexpected token `{}`", token)?,
+                }
+            }
+            buf
+        };
+
+        // improvement would be adding type checking, throwing a warning if a byte is downcast
+        // f8 is actually the exact same as b8 as parse constant will transmute the value at parse time
+        match word_size {
+            WordSize::B1 => full_vec.iter().for_each(|v| data.push(*v as u8)),
+            WordSize::B2 => full_vec
+                .iter()
+                .for_each(|v| data.extend((*v as u16).to_le_bytes())),
+            WordSize::B4 => full_vec
+                .iter()
+                .for_each(|v| data.extend((*v as u16).to_le_bytes())),
+            WordSize::B8 | WordSize::F8 => full_vec
+                .iter()
+                .for_each(|v| data.extend((*v).to_le_bytes())),
+        }
+        Ok(())
     }
 
-    pub fn emit() -> Result<(), AssembleError> {
+    // returns bytes consumed, alias of def b1 which accepts strings
+    fn parse_str(
+        stream: &mut Peekable<vec::IntoIter<Token>>,
+        labels: &HashMap<String, (u64, bool)>,
+        data: &mut Vec<u8>,
+    ) -> Result<(), AssembleError> {
+        loop {
+            let token = stream.next().unwrap();
+            match token {
+                Token::String(lexeme) => data.extend(lexeme.s.into_bytes()),
+                Token::Constant(lexeme, expected_offset) => {
+                    data.push(resolve_label(labels, &lexeme, expected_offset)? as u8)
+                }
+                Token::OpenParen(_) => {
+                    let expr = build_expression(data.len() as u64, stream, labels)?;
+                    data.push(resolve_expression(expr) as u8)
+                }
+                Token::SemiColon(_) => break,
+                _ => invalid_token_err!("unexpected token `{}`", token)?,
+            }
+        }
+        Ok(())
+    }
+
+    // returns bytes consumed
+    fn parse_set(
+        stream: &mut Peekable<vec::IntoIter<Token>>,
+        data: &mut Vec<u8>,
+    ) -> Result<(), AssembleError> {
         todo!()
+    }
+    // returns bytes consumed
+    fn parse_equ(
+        stream: &mut Peekable<vec::IntoIter<Token>>,
+        labels: &HashMap<String, (u64, bool)>,
+        label: &mut (String, (u64, bool)),
+        data_counter: u64,
+    ) -> Result<(), AssembleError> {
+        let token = stream.next().unwrap();
+        label.1 .1 = false;
+        label.1 .0 = match token {
+            Token::Constant(lexeme, expected_offset) => {
+                resolve_label(labels, &lexeme, expected_offset)?
+            }
+
+            Token::OpenParen(_) => {
+                let expr = build_expression(data_counter, stream, labels)?;
+                resolve_expression(expr)
+            }
+            _ => invalid_token_err!("unexpected token `{}`", token)?,
+        };
+        Ok(())
     }
 }
+fn convert_to_symbolic_offset(offset: bool) -> char {
+    match offset {
+        true => '@',
+        false => '$',
+    }
+}
+fn resolve_label(
+    labels: &HashMap<String, (u64, bool)>,
+    lexeme: &Lexeme,
+    expected_offset: bool,
+) -> Result<u64, AssembleError> {
+    println!("labels: {labels:?}");
+    let constant = parse_constant(lexeme, expected_offset)?;
+    match constant {
+        Label::Resolved(value, offset) => {
+            if offset != expected_offset {
+                panic!("pretty sure thsi is impossible but idk man")
+            }
+            Ok(value)
+        }
+        Label::Unresolved(label, _) => match labels.get(&label) {
+            Some((value, offset)) => {
+                if *offset != expected_offset {
+                    return Err(AssembleError::new(format!(
+                        "expected '{}' for label `{}`",
+                        convert_to_symbolic_offset(*offset),
+                        lexeme.s
+                    ))
+                    .attach_lexeme(lexeme));
+                }
+                Ok(*value)
+            }
 
+            None => {
+                return Err(AssembleError::new(format!("failed to resolve `{label}`"))
+                    .attach_lexeme(lexeme))
+            }
+        },
+    }
+}
 fn consume_register(
     stream: &mut Peekable<vec::IntoIter<Token>>,
 ) -> Result<RegHandle, AssembleError> {
@@ -890,9 +927,10 @@ fn resolve_register(reg: &Lexeme) -> Result<RegHandle, AssembleError> {
                     "l" => base + 0xd0,
                     "h" => base + 0xe0,
                     "f" => base + 0x00,
+                    "" => base + 0x00,
                     _ => {
                         return Err(AssembleError::new(format!(
-                            "unrecognized subregister `{}`",
+                            "unrecognized subregister `{}` ({id}+{sub})",
                             reg.s
                         ))
                         .attach_lexeme(reg))
@@ -911,12 +949,23 @@ fn resolve_register(reg: &Lexeme) -> Result<RegHandle, AssembleError> {
 
 fn parse_constant(lexeme: &Lexeme, offset: bool) -> Result<Label, AssembleError> {
     match lexeme.s.chars().nth(0).unwrap() {
-        '!' => Ok(Label::Unresolved(lexeme.s.clone(), offset)),
+        '!' => Ok(Label::Unresolved(
+            lexeme.s.clone().strip_prefix('!').unwrap().to_string(),
+            offset,
+        )),
         'x' => {
             todo!()
         }
         'b' => {
             todo!()
+        }
+        'f' => {
+            let stripped = lexeme.s.strip_prefix('f').unwrap();
+            let float = stripped.parse::<f64>().map_err(|e| {
+                AssembleError::new(format!("not a float: {e}")).attach_lexeme(lexeme)
+            })?;
+            let value = unsafe { transmute::<f64, u64>(float) };
+            Ok(Label::Resolved(value, offset))
         }
         _ => {
             if !lexeme.s.chars().nth(0).unwrap().is_ascii_digit() {
@@ -925,22 +974,21 @@ fn parse_constant(lexeme: &Lexeme, offset: bool) -> Result<Label, AssembleError>
                         .attach_lexeme(lexeme),
                 );
             }
-            let value: u64 = if let Some(n) = lexeme.s.strip_prefix('d') {
-                n.parse().map_err(|e| {
-                    AssembleError::new(format!("invalid constant value `{}`: {e}", lexeme.s))
-                        .attach_lexeme(lexeme)
-                })?
-            } else {
-                lexeme.s.parse().map_err(|e| {
-                    AssembleError::new(format!("invalid constant value `{}`: {e}", lexeme.s))
-                        .attach_lexeme(lexeme)
-                })?
+            let n = {
+                if lexeme.s.starts_with('d') {
+                    lexeme.s.strip_prefix('d').unwrap()
+                } else {
+                    lexeme.s.as_str()
+                }
             };
+            let value = n.parse().map_err(|e| {
+                AssembleError::new(format!("invalid constant value `{}`: {e}", lexeme.s))
+                    .attach_lexeme(lexeme)
+            })?;
             Ok(Label::Resolved(value, offset))
         }
     }
 }
-
 enum DataExprNode {
     Literal(u64),
     Add(Box<DataExprNode>, Box<DataExprNode>),
@@ -949,10 +997,6 @@ enum DataExprNode {
     Div(Box<DataExprNode>, Box<DataExprNode>),
     Mod(Box<DataExprNode>, Box<DataExprNode>),
 }
-
-// fn build_node(dc:u64,token : Token ,labels:&HashMap<String,(u64,bool)>) -> Result<DataExprNode,AssembleError>{
-// todo!()
-// }
 
 fn build_expression(
     dc: u64,
@@ -965,28 +1009,10 @@ fn build_expression(
 
     let left = match left_token {
         Token::Constant(lexeme, offset) => {
-            let value = parse_constant(&lexeme, offset)?;
-            match value {
-                Label::Resolved(value, offset) => DataExprNode::Literal(value),
-                Label::Unresolved(string, offset) => {
-                    let resolve = if let Some((v, offset)) = labels.get(&string) {
-                        if *offset == true {
-                            panic!("relative not allowed in data")
-                        }
-                        *v
-                    } else {
-                        {
-                            let msg = format!(
-                                "cannot resolve label `{}` labels must be declared before use",
-                                lexeme.s
-                            );
-                            Err(AssembleError::new(msg).attach_lexeme(&lexeme))
-                        }?
-                    };
+            // let value = parse_constant(&lexeme, offset)?;
+            let value = resolve_label(labels, &lexeme, offset)?;
 
-                    DataExprNode::Literal(resolve)
-                }
-            }
+            DataExprNode::Literal(value)
         }
         Token::Dot(lexeme) => DataExprNode::Literal(dc),
         Token::OpenParen(lexeme) => build_expression(dc, stream, labels)?,
@@ -1026,11 +1052,12 @@ fn build_expression(
                 }
             }
         }
+
         Token::Dot(lexeme) => DataExprNode::Literal(dc),
         Token::OpenParen(lexeme) => build_expression(dc, stream, labels)?,
         _ => invalid_token_err!("invalid token in expression `{}`", right_token)?,
     };
-
+    println!("token after parsing expr `{:?}`", stream.next().unwrap());
     match center_token {
         Token::Plus(_) => Ok(DataExprNode::Add(Box::new(left), Box::new(right))),
         Token::Dash(_) => Ok(DataExprNode::Sub(Box::new(left), Box::new(right))),
@@ -1038,7 +1065,7 @@ fn build_expression(
         Token::Slash(_) => Ok(DataExprNode::Div(Box::new(left), Box::new(right))),
         Token::Percent(_) => Ok(DataExprNode::Mod(Box::new(left), Box::new(right))),
 
-        _ => invalid_token_err!("invalid token in expression `{}`", center_token)?,
+        _ => invalid_token_err!("invalid operator in expression `{}`", center_token)?,
     }
 }
 

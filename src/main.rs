@@ -74,6 +74,7 @@ fn main() {
 }
 
 fn real_main() -> Result<(), AssembleError> {
+    let path = "nisvc.out";
     let mut sources = Source::new();
     sources.open_file("test.nsm")?;
     let tokens = tokenize(&sources)?;
@@ -81,8 +82,9 @@ fn real_main() -> Result<(), AssembleError> {
     let (entry_point, data, program, debug_symbols) =
         Assembler::assemble(tokens).map_err(|e| e.traceback(&sources))?;
     let exe_package = package(entry_point, data, program, debug_symbols);
-    let mut out = File::create("nisvc.out")
-        .map_err(|e| AssembleError::new(format!("failed to write to output file: {e}")))?;
-    out.write_all(&exe_package);
+    let mut out = File::create(path)
+        .map_err(|e| AssembleError::new(format!("failed to create {path}: {e}")))?;
+    out.write_all(&exe_package)
+        .map_err(|e| AssembleError::new(format!("failed to write to {path}: {e}")))?;
     Ok(())
 }

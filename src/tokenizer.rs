@@ -1,46 +1,3 @@
-// enum TokenKind{
-//     // Opcode
-//     Nop,
-//     Cpy,
-//     Ldi,
-//     Load,
-//     Store,
-//     Add,
-//     Sub,
-//     Mult,
-//     Div,
-//     Or,
-//     Xor,
-//     And,
-//     Not,
-//     Shl,
-//     Shr,
-//     Rotl,
-//     Rotr,
-//     Neg,
-//     Jmp,
-//     Jifz,
-//     Jifnz,
-//     Inc,
-//     Dec,
-//     Push,
-//     Pop,
-//     Call,
-//     Ret,
-//     Fopen,
-//     Fread,
-//     Fwrite,
-//     Fseek,
-//     Fclose,
-//     Malloc,
-//     Realloc,
-//     Free,
-//     Memcpy,
-//     Memset,
-//     Itof,
-
-// }
-
 use std::{collections::HashMap, fs::File, io::Read, iter::repeat_n};
 
 use colorize::AnsiColor;
@@ -76,7 +33,10 @@ impl Source {
     pub fn traceback(&self, lexeme: &Lexeme) -> String {
         let mut file = self.files.get(&lexeme.fd).unwrap().lines();
         let path = self.paths.get(&lexeme.fd).unwrap();
-        let mut line: String = file.nth(lexeme.line).unwrap().to_string();
+        let line: String = file
+            .nth(lexeme.line)
+            .expect(&format!("failed to get line `{}`", lexeme.line))
+            .to_string();
 
         let highlight = {
             let mut buf: String = repeat_n(' ', lexeme.column.saturating_sub(1)).collect();
@@ -114,6 +74,8 @@ pub enum Token {
     SemiColon(Lexeme),
     Comma(Lexeme),
     Dot(Lexeme),
+    EOS(Lexeme),
+    EOL(Lexeme),
     EOF(Lexeme),
 }
 
@@ -139,6 +101,8 @@ impl Token {
             Token::EOF(lexeme) => lexeme,
             Token::Comma(lexeme) => lexeme,
             Token::Dot(lexeme) => lexeme,
+            Token::EOS(lexeme) => lexeme,
+            Token::EOL(lexeme) => lexeme,
         }
     }
 }
@@ -294,11 +258,8 @@ pub fn tokenize(source: &Source) -> Result<Vec<Token>, AssembleError> {
                 },
                 TokenizerState::BuildingSection => match chr {
                     '\n' | ' ' => {
-                        if chr == '\n' {
-                            line += 1;
-                            column = 0;
-                        }
                         state = TokenizerState::Initial;
+                        tokens.push(Token::EOS(Lexeme::new("End Of Section", line, column, *fd)));
                         let lexeme = Lexeme::new(&lexeme_buffer, line, column, *fd);
                         match lexeme_buffer.as_str() {
                             "data" => tokens.push(Token::DATA(lexeme)),
@@ -312,6 +273,10 @@ pub fn tokenize(source: &Source) -> Result<Vec<Token>, AssembleError> {
                                 .attach_lexeme(&lexeme)
                                 .traceback(source));
                             }
+                        }
+                        if chr == '\n' {
+                            line += 1;
+                            column = 0;
                         }
                         lexeme_buffer.clear();
                     }
@@ -386,7 +351,13 @@ pub fn tokenize(source: &Source) -> Result<Vec<Token>, AssembleError> {
                 }
             }
         }
-        tokens.push(Token::EOF(Lexeme::new("EOF SENTINEL", line, column, *fd)));
+        tokens.push(Token::EOS(Lexeme::new("End Of Section", line, column, *fd)));
+        tokens.push(Token::EOF(Lexeme::new(
+            "EOF SENTINEL",
+            line.saturating_sub(1),
+            token_column_start,
+            *fd,
+        )));
     }
     Ok(tokens)
 }
