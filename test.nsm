@@ -1,8 +1,15 @@
- :data
+:entry
+    _start
 
-    test equ $1;
-    louis equ ($!test + ($2 + $3));
+:data
+    hello str "Hello, World!" $10 ;
+    len equ (. - $!hello);
 
 :program
-    ldi r1,$1
-    cpy r2,r1
+    !_start
+        ldi r1, @!hello
+        ldi r2, $!len
+        push r2
+        push r1
+        int $2
+        int $255

@@ -282,6 +282,7 @@ pub fn tokenize(source: &Source) -> Result<Vec<Token>, AssembleError> {
                     }
                     _ => lexeme_buffer.push(chr),
                 },
+
                 TokenizerState::BuildingKeyWord => match chr {
                     'a'..='z' | 'A'..='Z' | '_' | '!' | '0'..='9' => lexeme_buffer.push(chr),
                     '#' => state = TokenizerState::Comment,
@@ -300,6 +301,7 @@ pub fn tokenize(source: &Source) -> Result<Vec<Token>, AssembleError> {
                         state = TokenizerState::Initial;
                     }
                 },
+
                 TokenizerState::BuildingConstant(offset) => match chr {
                     'a'..='z' | 'A'..='Z' | '_' | '!' | '0'..='9' => lexeme_buffer.push(chr),
                     '#' => state = TokenizerState::Comment,
@@ -324,6 +326,7 @@ pub fn tokenize(source: &Source) -> Result<Vec<Token>, AssembleError> {
                             token_column_start,
                             *fd,
                         )));
+                        lexeme_buffer.clear();
                         state = TokenizerState::Initial
                     }
                     '\\' => state = TokenizerState::StrEsc,

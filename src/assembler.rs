@@ -17,7 +17,48 @@ type RegHandle = u8;
 #[derive(Debug)]
 pub enum Label {
     Resolved(u64, bool),
-    Unresolved(String, bool),
+    Unresolved(String, bool, Lexeme),
+}
+impl Label {
+    fn resolve(
+        &mut self,
+        labels: &HashMap<String, (u64, bool)>,
+        program_size: u64,
+    ) -> Result<(), AssembleError> {
+        let value = match self {
+            Label::Resolved(value, offset) => {
+                if *offset {
+                    *value + program_size
+                } else {
+                    *value
+                }
+            }
+            Label::Unresolved(label, expected_offset, lexeme) => match labels.get(label) {
+                Some((value, offset)) => {
+                    if *offset != *expected_offset {
+                        return Err(AssembleError::new(format!(
+                            "expected '{}' for label `{}`",
+                            convert_to_symbolic_offset(*offset),
+                            lexeme.s
+                        ))
+                        .attach_lexeme(lexeme));
+                    }
+                    if *offset {
+                        *value + program_size
+                    } else {
+                        *value
+                    }
+                }
+
+                None => {
+                    return Err(AssembleError::new(format!("failed to resolve `{label}`"))
+                        .attach_lexeme(lexeme))
+                }
+            },
+        };
+        *self = Label::Resolved(value, false);
+        Ok(())
+    }
 }
 #[derive(Debug)]
 pub enum Instruction {
@@ -33,7 +74,7 @@ pub enum Instruction {
     Load {
         dest: RegHandle,
         n: RegHandle,
-        addr: Label,
+        addr: RegHandle,
     },
     Store {
         dest: RegHandle,
@@ -139,54 +180,54 @@ pub enum Instruction {
     // fwrite fd str_ptr str_len
     // fread fd buf_ptr buf_len
     // fclose fd
-    Fopen {
-        dest_fd: RegHandle,
-        file_path_str_ptr: RegHandle,
-        file_path_str_len: RegHandle,
-    },
-    Fread {
-        fd: RegHandle,
-        buf_ptr: RegHandle,
-        buf_len: RegHandle,
-    },
-    Fwrite {
-        fd: RegHandle,
-        buf_ptr: RegHandle,
-        buf_len: RegHandle,
-    },
-    Fseek {
-        fd: RegHandle,
-        seek: RegHandle,
-        direction: RegHandle,
-    },
-    Fclose {
-        fd: RegHandle,
-    },
-    //new
+    // Fopen {
+    //     dest_fd: RegHandle,
+    //     file_path_str_ptr: RegHandle,
+    //     file_path_str_len: RegHandle,
+    // },
+    // Fread {
+    //     fd: RegHandle,
+    //     buf_ptr: RegHandle,
+    //     buf_len: RegHandle,
+    // },
+    // Fwrite {
+    //     fd: RegHandle,
+    //     buf_ptr: RegHandle,
+    //     buf_len: RegHandle,
+    // },
+    // Fseek {
+    //     fd: RegHandle,
+    //     seek: RegHandle,
+    //     direction: RegHandle,
+    // },
+    // Fclose {
+    //     fd: RegHandle,
+    // },
+    // //new
 
-    //heap management
-    Malloc {
-        dest_ptr: RegHandle,
-        size: RegHandle,
-    },
-    Realloc {
-        dest_ptr: RegHandle,
-        ptr: RegHandle,
-        new_size: RegHandle,
-    },
-    Free {
-        ptr: RegHandle,
-    },
-    Memcpy {
-        dest: RegHandle,
-        n: RegHandle,
-        src: RegHandle,
-    },
-    Memset {
-        dest: RegHandle,
-        n: RegHandle,
-        value: RegHandle,
-    },
+    // //heap management
+    // Malloc {
+    //     dest_ptr: RegHandle,
+    //     size: RegHandle,
+    // },
+    // Realloc {
+    //     dest_ptr: RegHandle,
+    //     ptr: RegHandle,
+    //     new_size: RegHandle,
+    // },
+    // Free {
+    //     ptr: RegHandle,
+    // },
+    // Memcpy {
+    //     dest: RegHandle,
+    //     n: RegHandle,
+    //     src: RegHandle,
+    // },
+    // Memset {
+    //     dest: RegHandle,
+    //     n: RegHandle,
+    //     value: RegHandle,
+    // },
 
     // floating point
     Itof {
@@ -228,6 +269,9 @@ pub enum Instruction {
         op1: RegHandle,
         op2: RegHandle,
     },
+    Int {
+        code: Label,
+    },
     Breakpoint,
     HaltExe,
 }
@@ -257,9 +301,9 @@ impl Instruction {
                 Self::Load {
                     dest: consume_register(stream)?,
                     n: consume_register(stream)?,
-                    addr: consume_constant(stream)?,
+                    addr: consume_register(stream)?,
                 },
-                10,
+                4,
             )),
             "store" => Ok((
                 Self::Store {
@@ -422,81 +466,81 @@ impl Instruction {
                 9,
             )),
             "ret" => Ok((Self::Ret, 1)),
-            "fopen" => Ok((
-                Self::Fopen {
-                    dest_fd: consume_register(stream)?,
-                    file_path_str_ptr: consume_register(stream)?,
-                    file_path_str_len: consume_register(stream)?,
-                },
-                4,
-            )),
-            "fread" => Ok((
-                Self::Fread {
-                    fd: consume_register(stream)?,
-                    buf_ptr: consume_register(stream)?,
-                    buf_len: consume_register(stream)?,
-                },
-                4,
-            )),
-            "fwrite" => Ok((
-                Self::Fwrite {
-                    fd: consume_register(stream)?,
-                    buf_ptr: consume_register(stream)?,
-                    buf_len: consume_register(stream)?,
-                },
-                4,
-            )),
-            "fseek" => Ok((
-                Self::Fseek {
-                    fd: consume_register(stream)?,
-                    seek: consume_register(stream)?,
-                    direction: consume_register(stream)?,
-                },
-                4,
-            )),
-            "fclose" => Ok((
-                Self::Fclose {
-                    fd: consume_register(stream)?,
-                },
-                2,
-            )),
-            "malloc" => Ok((
-                Self::Malloc {
-                    dest_ptr: consume_register(stream)?,
-                    size: consume_register(stream)?,
-                },
-                3,
-            )),
-            "realloc" => Ok((
-                Self::Realloc {
-                    dest_ptr: consume_register(stream)?,
-                    ptr: consume_register(stream)?,
-                    new_size: consume_register(stream)?,
-                },
-                4,
-            )),
-            "free" => Ok((
-                Self::Free {
-                    ptr: consume_register(stream)?,
-                },
-                2,
-            )),
-            "memcpy" => Ok((
-                Self::Memcpy {
-                    dest: consume_register(stream)?,
-                    n: consume_register(stream)?,
-                    src: consume_register(stream)?,
-                },
-                4,
-            )),
-            "memset" => Ok((
-                Self::Memset {
-                    dest: consume_register(stream)?,
-                    n: consume_register(stream)?,
-                    value: consume_register(stream)?,
-                },
-                4,
-            )),
+            // "fopen" => Ok((
+            //     Self::Fopen {
+            //         dest_fd: consume_register(stream)?,
+            //         file_path_str_ptr: consume_register(stream)?,
+            //         file_path_str_len: consume_register(stream)?,
+            //     },
+            //     4,
+            // )),
+            // "fread" => Ok((
+            //     Self::Fread {
+            //         fd: consume_register(stream)?,
+            //         buf_ptr: consume_register(stream)?,
+            //         buf_len: consume_register(stream)?,
+            //     },
+            //     4,
+            // )),
+            // "fwrite" => Ok((
+            //     Self::Fwrite {
+            //         fd: consume_register(stream)?,
+            //         buf_ptr: consume_register(stream)?,
+            //         buf_len: consume_register(stream)?,
+            //     },
+            //     4,
+            // )),
+            // "fseek" => Ok((
+            //     Self::Fseek {
+            //         fd: consume_register(stream)?,
+            //         seek: consume_register(stream)?,
+            //         direction: consume_register(stream)?,
+            //     },
+            //     4,
+            // )),
+            // "fclose" => Ok((
+            //     Self::Fclose {
+            //         fd: consume_register(stream)?,
+            //     },
+            //     2,
+            // )),
+            // "malloc" => Ok((
+            //     Self::Malloc {
+            //         dest_ptr: consume_register(stream)?,
+            //         size: consume_register(stream)?,
+            //     },
+            //     3,
+            // )),
+            // "realloc" => Ok((
+            //     Self::Realloc {
+            //         dest_ptr: consume_register(stream)?,
+            //         ptr: consume_register(stream)?,
+            //         new_size: consume_register(stream)?,
+            //     },
+            //     4,
+            // )),
+            // "free" => Ok((
+            //     Self::Free {
+            //         ptr: consume_register(stream)?,
+            //     },
+            //     2,
+            // )),
+            // "memcpy" => Ok((
+            //     Self::Memcpy {
+            //         dest: consume_register(stream)?,
+            //         n: consume_register(stream)?,
+            //         src: consume_register(stream)?,
+            //     },
+            //     4,
+            // )),
+            // "memset" => Ok((
+            //     Self::Memset {
+            //         dest: consume_register(stream)?,
+            //         n: consume_register(stream)?,
+            //         value: consume_register(stream)?,
+            //     },
+            //     4,
+            // )),
             "itof" => Ok((
                 Self::Itof {
                     destf: consume_register(stream)?,
@@ -559,11 +603,106 @@ impl Instruction {
                 },
                 4,
             )),
+            "int" => Ok((
+                Self::Int {
+                    code: consume_constant(stream)?,
+                },
+                9,
+            )),
             "haltexe" => Ok((Self::HaltExe, 1)),
             _ => Err(
                 AssembleError::new(format!("unrecognized opcode `{}`", lexeme.s))
                     .attach_lexeme(lexeme),
             ),
+        }
+    }
+
+    fn compile(&self) -> Vec<u8> {
+        match self {
+            Instruction::Nop => vec![0x00],
+            Instruction::Cpy { dest, src } => vec![0x01, *dest, *src],
+            Instruction::Ldi { dest, src } => vec![0x02, *dest]
+                .into_iter()
+                .chain(match src {
+                    Label::Resolved(v, _) => v.to_le_bytes(),
+                    _ => unreachable!(),
+                })
+                .collect(),
+            Instruction::Load { dest, n, addr } => vec![0x03, *dest, *n, *addr],
+            Instruction::Store { dest, n, src } => vec![0x04, *dest, *n, *src],
+            Instruction::Add { dest, op1, op2 } => vec![0x05, *dest, *op1, *op2],
+            Instruction::Sub { dest, op1, op2 } => vec![0x06, *dest, *op1, *op2],
+            Instruction::Mult { dest, op1, op2 } => vec![0x07, *dest, *op1, *op2],
+            Instruction::Div { dest, op1, op2 } => vec![0x08, *dest, *op1, *op2],
+            Instruction::Or { dest, op1, op2 } => vec![0x09, *dest, *op1, *op2],
+            Instruction::Xor { dest, op1, op2 } => vec![0x0a, *dest, *op1, *op2],
+            Instruction::And { dest, op1, op2 } => vec![0x0b, *dest, *op1, *op2],
+            Instruction::Not { dest, op } => vec![0x0c, *dest, *op],
+            Instruction::Shl { dest, n, src } => vec![0x0d, *dest, *n, *src],
+            Instruction::Shr { dest, n, src } => vec![0x0e, *dest, *n, *src],
+            Instruction::Rotl { dest, n, src } => vec![0x0f, *dest, *n, *src],
+            Instruction::Rotr { dest, n, src } => vec![0x10, *dest, *n, *src],
+            Instruction::Neg { dest, op } => vec![0x11, *dest, *op],
+            Instruction::Jmp { addr } => vec![0x12]
+                .into_iter()
+                .chain(match addr {
+                    Label::Resolved(v, _) => v.to_le_bytes(),
+                    _ => unreachable!(),
+                })
+                .collect(),
+            Instruction::Jifz { addr, condition } => vec![0x13]
+                .into_iter()
+                .chain(match addr {
+                    Label::Resolved(v, _) => v.to_le_bytes(),
+                    _ => unreachable!(),
+                })
+                .collect(),
+            Instruction::Jifnz { addr, condition } => vec![0x14]
+                .into_iter()
+                .chain(match addr {
+                    Label::Resolved(v, _) => v.to_le_bytes(),
+                    _ => unreachable!(),
+                })
+                .collect(),
+            Instruction::Inc { reg } => vec![0x16, *reg],
+            Instruction::Dec { reg } => vec![0x17, *reg],
+            Instruction::Push { src } => vec![0x18, *src],
+            Instruction::Pop { dest } => vec![0x19, *dest],
+            Instruction::Call { addr } => vec![0x1a]
+                .into_iter()
+                .chain(match addr {
+                    Label::Resolved(v, _) => v.to_le_bytes(),
+                    _ => unreachable!(),
+                })
+                .collect(),
+            Instruction::Ret => vec![],
+            // Instruction::Fopen { dest_fd, file_path_str_ptr, file_path_str_len } => vec![0],
+            // Instruction::Fread { fd, buf_ptr, buf_len } => vec![],
+            // Instruction::Fwrite { fd, buf_ptr, buf_len } => vec![],
+            // Instruction::Fseek { fd, seek, direction } => vec![],
+            // Instruction::Fclose { fd } => vec![],
+            // Instruction::Malloc { dest_ptr, size } => vec![],
+            // Instruction::Realloc { dest_ptr, ptr, new_size } => vec![],
+            // Instruction::Free { ptr } => vec![],
+            // Instruction::Memcpy { dest, n, src } => vec![],
+            // Instruction::Memset { dest, n, value } => vec![],
+            Instruction::Itof { destf, srci } => vec![0x1b, *destf, *srci],
+            Instruction::Ftoi { desti, srcf } => vec![0x1c, *desti, *srcf],
+            Instruction::Fadd { dest, op1, op2 } => vec![0x1d, *dest, *op1, *op2],
+            Instruction::Fsub { dest, op1, op2 } => vec![0x1f, *dest, *op1, *op2],
+            Instruction::Fmult { dest, op1, op2 } => vec![0x20, *dest, *op1, *op2],
+            Instruction::Fdiv { dest, op1, op2 } => vec![0x21, *dest, *op1, *op2],
+            Instruction::Fmod { dest, op1, op2 } => vec![0x22, *dest, *op1, *op2],
+            Instruction::Mod { dest, op1, op2 } => vec![0x23, *dest, *op1, *op2],
+            Instruction::Int { code } => vec![0x24]
+                .into_iter()
+                .chain(match code {
+                    Label::Resolved(v, _) => v.to_le_bytes(),
+                    _ => unreachable!(),
+                })
+                .collect(),
+            Instruction::Breakpoint => panic!("deprecated"),
+            Instruction::HaltExe => panic!("deprecated"),
         }
     }
 }
@@ -578,6 +717,8 @@ pub struct Assembler {
     labels: HashMap<String, (u64, bool)>,
     program_intermediate: Vec<Instruction>,
     data: Vec<u8>,
+    program_size: u64,
+    entry_point: u64,
 }
 
 enum Section {
@@ -603,7 +744,7 @@ impl WordSize {
                 "b2" => Ok(Self::B2),
                 "b4" => Ok(Self::B4),
                 "b8" => Ok(Self::B8),
-                "f8" => Ok(Self::B8),
+                "f8" => Ok(Self::F8),
                 _ => {
                     let msg = format!("invalid byte size `{}`", lexeme.s);
                     Err(AssembleError::new(msg).attach_lexeme(&lexeme))
@@ -618,32 +759,83 @@ impl Assembler {
     pub fn assemble(tokens: Vec<Token>) -> Result<(u64, Vec<u8>, Vec<u8>, Vec<u8>), AssembleError> {
         let mut assembler = Self::parse(tokens)?;
         assembler.resolve()?;
-        todo!()
+        let program = assembler.emit();
+        let debug_symbols = assembler.build_debug_symbol_table();
+        Ok((
+            assembler.entry_point,
+            assembler.data,
+            program,
+            debug_symbols,
+        ))
+    }
+    fn build_debug_symbol_table(&self) -> Vec<u8> {
+        let mut image = Vec::<u8>::new();
+        for label in &self.labels {
+            image.extend(label.1 .0.to_le_bytes());
+            image.extend((label.0.len() as u64).to_le_bytes());
+            image.extend(label.0.clone().into_bytes())
+        }
+        image
+    }
+    fn emit(&self) -> Vec<u8> {
+        let mut program_image = Vec::<u8>::new();
+        for instruction in &self.program_intermediate {
+            program_image.extend(instruction.compile());
+        }
+        program_image
+    }
+    fn resolve(&mut self) -> Result<(), AssembleError> {
+        for instruction in &mut self.program_intermediate {
+            match instruction {
+                Instruction::Ldi { dest: _, src } => {
+                    src.resolve(&self.labels, self.program_size)?
+                }
+                Instruction::Jmp { addr } => addr.resolve(&self.labels, self.program_size)?,
+                Instruction::Jifz { addr, condition: _ } => {
+                    addr.resolve(&self.labels, self.program_size)?
+                }
+                Instruction::Jifnz { addr, condition: _ } => {
+                    addr.resolve(&self.labels, self.program_size)?
+                }
+                Instruction::Call { addr } => addr.resolve(&self.labels, self.program_size)?,
+                _ => continue,
+            }
+        }
+        Ok(())
     }
 
     fn parse(tokens: Vec<Token>) -> Result<Self, AssembleError> {
         let mut stream = tokens.into_iter().peekable();
         let mut labels: HashMap<String, (u64, bool)> = HashMap::new();
         let mut data: Vec<u8> = Vec::new();
-        let mut entry_point_label: String;
+        let mut entry_point_label: Option<Label> = None;
         let mut program_intermediate: Option<Vec<Instruction>> = None;
+        let mut program_size = 0;
         loop {
             let token = stream.next().unwrap();
             match token {
                 Token::EOF(_) => break,
                 Token::PROGRAM(_) => {
-                    let (program, program_labels) = Self::parse_program(&mut stream)?;
+                    let (program, program_labels, added_pc) = Self::parse_program(&mut stream)?;
                     for (name, address) in program_labels {
                         labels.insert(name, (address, false));
                     }
+                    program_size += added_pc;
                     program_intermediate = Some(program);
                 }
                 Token::DATA(_) => {
                     Self::parse_data_reimpl(&mut stream, &mut labels, &mut data)?;
                 }
                 Token::ENTRYPOINT(_) => {
-                    let (label, address) = Self::parse_entry(&mut stream)?;
-                    todo!()
+                    // let (label, address) = Self::parse_entry(&mut stream)?;
+                    let token = stream.next().unwrap();
+                    match token {
+                        Token::KeyWord(lexeme) => {
+                            entry_point_label =
+                                Some(Label::Unresolved(lexeme.s.clone(), false, lexeme))
+                        }
+                        _ => invalid_token_err!("expected label `{}`", token)?,
+                    }
                 }
                 Token::EOS(_) => continue,
                 _ => {
@@ -654,24 +846,34 @@ impl Assembler {
         }
         println!("{program_intermediate:?}");
         Ok(Self {
-            labels,
             program_intermediate: if let Some(p) = program_intermediate {
                 p
             } else {
                 return Err(AssembleError::new("no program defined".to_string()));
             },
             data,
+            program_size,
+            entry_point: if let Some(mut e) = entry_point_label {
+                e.resolve(&labels, program_size)?;
+                match e {
+                    Label::Resolved(v, _) => v,
+                    Label::Unresolved(_, _, _) => unreachable!(),
+                }
+            } else {
+                return Err(AssembleError::new("no entry point defined".to_string()));
+            },
+            labels,
         })
     }
 
-    fn parse_entry(
-        stream: &mut Peekable<vec::IntoIter<Token>>,
-    ) -> Result<(String, u64), AssembleError> {
-        todo!()
-    }
+    // fn parse_entry(
+    //     stream: &mut Peekable<vec::IntoIter<Token>>,
+    // ) -> Result<(String, AssembleError> {
+
+    // }
     fn parse_program(
         tokens: &mut Peekable<vec::IntoIter<Token>>,
-    ) -> Result<(Vec<Instruction>, Vec<(String, u64)>), AssembleError> {
+    ) -> Result<(Vec<Instruction>, Vec<(String, u64)>, u64), AssembleError> {
         let mut program: Vec<Instruction> = Vec::new();
         let mut program_labels: Vec<(String, u64)> = Vec::new();
         let mut pc: u64 = 0;
@@ -680,7 +882,8 @@ impl Assembler {
             match token {
                 Token::KeyWord(lexeme) => {
                     if lexeme.s.starts_with('!') {
-                        program_labels.push((lexeme.s, pc));
+                        println!("found program label `{}` : {pc}", lexeme.s);
+                        program_labels.push((lexeme.s.strip_prefix('!').unwrap().to_string(), pc));
                     } else {
                         let (instr, instr_size) = Instruction::new(&lexeme, tokens)?;
                         pc += instr_size;
@@ -699,7 +902,7 @@ impl Assembler {
                 }
             }
         }
-        Ok((program, program_labels))
+        Ok((program, program_labels, pc))
     }
 
     fn parse_data_reimpl(
@@ -854,7 +1057,7 @@ fn resolve_label(
             }
             Ok(value)
         }
-        Label::Unresolved(label, _) => match labels.get(&label) {
+        Label::Unresolved(label, _, _) => match labels.get(&label) {
             Some((value, offset)) => {
                 if *offset != expected_offset {
                     return Err(AssembleError::new(format!(
@@ -952,6 +1155,7 @@ fn parse_constant(lexeme: &Lexeme, offset: bool) -> Result<Label, AssembleError>
         '!' => Ok(Label::Unresolved(
             lexeme.s.clone().strip_prefix('!').unwrap().to_string(),
             offset,
+            lexeme.clone(),
         )),
         'x' => {
             todo!()
@@ -1032,11 +1236,8 @@ fn build_expression(
             let value = parse_constant(&lexeme, offset)?;
             match value {
                 Label::Resolved(value, offset) => DataExprNode::Literal(value),
-                Label::Unresolved(string, offset) => {
+                Label::Unresolved(string, offset, _) => {
                     let resolve = if let Some((v, offset)) = labels.get(&string) {
-                        if *offset == true {
-                            panic!("relative not allowed in data")
-                        }
                         *v
                     } else {
                         {
