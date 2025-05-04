@@ -272,6 +272,9 @@ pub enum Instruction {
     Int {
         code: Label,
     },
+    Pushi {
+        immediate: Label,
+    },
     Breakpoint,
     HaltExe,
 }
@@ -609,6 +612,13 @@ impl Instruction {
                 },
                 9,
             )),
+
+            "pushi" => Ok((
+                Self::Pushi {
+                    immediate: consume_constant(stream)?,
+                },
+                9,
+            )),
             "haltexe" => Ok((Self::HaltExe, 1)),
             _ => Err(
                 AssembleError::new(format!("unrecognized opcode `{}`", lexeme.s))
@@ -697,6 +707,13 @@ impl Instruction {
             Instruction::Int { code } => vec![0x24]
                 .into_iter()
                 .chain(match code {
+                    Label::Resolved(v, _) => v.to_le_bytes(),
+                    _ => unreachable!(),
+                })
+                .collect(),
+            Instruction::Pushi { immediate } => vec![0x25]
+                .into_iter()
+                .chain(match immediate {
                     Label::Resolved(v, _) => v.to_le_bytes(),
                     _ => unreachable!(),
                 })
@@ -798,6 +815,9 @@ impl Assembler {
                     addr.resolve(&self.labels, self.program_size)?
                 }
                 Instruction::Call { addr } => addr.resolve(&self.labels, self.program_size)?,
+                Instruction::Pushi { immediate } => {
+                    immediate.resolve(&self.labels, self.program_size)?
+                }
                 _ => continue,
             }
         }
@@ -933,6 +953,7 @@ impl Assembler {
                     }
                     labels.insert(label.0, label.1);
                 }
+                Token::SemiColon(_) => continue,
                 Token::EOS(_) => break,
                 _ => invalid_token_err!("expected label declaration `{}`", token)?,
             }
@@ -1113,7 +1134,7 @@ fn resolve_register(reg: &Lexeme) -> Result<RegHandle, AssembleError> {
                     rest.find(|c: char| !c.is_ascii_digit())
                         .unwrap_or(rest.len()),
                 );
-                let base = id.parse::<u8>().unwrap() + 4;
+                let base = id.parse::<u8>().unwrap() + 3;
                 match sub {
                     "b1" => base + 0x10,
                     "b2" => base + 0x20,
@@ -1158,7 +1179,11 @@ fn parse_constant(lexeme: &Lexeme, offset: bool) -> Result<Label, AssembleError>
             lexeme.clone(),
         )),
         'x' => {
-            todo!()
+            let stripped = lexeme.s.strip_prefix('x').unwrap();
+            let value = u64::from_str_radix(&stripped, 16).map_err(|e| {
+                AssembleError::new(format!("failed to parse hex digit `{}`: {e}", lexeme.s))
+            })?;
+            Ok(Label::Resolved(value, offset))
         }
         'b' => {
             todo!()

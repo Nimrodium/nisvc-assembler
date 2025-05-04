@@ -76,7 +76,7 @@ fn main() {
 fn real_main() -> Result<(), AssembleError> {
     let path = "nisvc.out";
     let mut sources = Source::new();
-    sources.open_file("test.nsm")?;
+    sources.open_file("raw_rgb24_viewer.nsm")?;
     let tokens = tokenize(&sources)?;
     println!("{tokens:#?}");
     let (entry_point, data, program, debug_symbols) =

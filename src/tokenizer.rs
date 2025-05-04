@@ -146,7 +146,23 @@ pub fn tokenize(source: &Source) -> Result<Vec<Token>, AssembleError> {
         let mut line = 0;
         token_column_start = 0;
         let mut lexeme_buffer = String::new();
-        for chr in file.chars() {
+        let mut char_iter = file.chars();
+        let mut old_char = 0 as char;
+        let mut advance = true;
+        loop {
+            let chr = if advance {
+                match char_iter.next() {
+                    Some(c) => c,
+                    None => break,
+                }
+            } else {
+                advance = true;
+                old_char
+            };
+            old_char = chr;
+
+            // }
+            // for chr in file.chars() {
             column += 1;
             match state {
                 TokenizerState::Initial => {
@@ -310,11 +326,14 @@ pub fn tokenize(source: &Source) -> Result<Vec<Token>, AssembleError> {
                             Lexeme::new(&lexeme_buffer, line, token_column_start, *fd),
                             offset,
                         ));
+                        if chr != '"' {
+                            advance = false;
+                        }
                         lexeme_buffer.clear();
                         if chr == '\n' {
                             line += 1;
                             column = 0;
-                        }
+                        };
                         state = TokenizerState::Initial;
                     }
                 },
