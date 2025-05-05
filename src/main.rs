@@ -1,8 +1,8 @@
-use std::{fmt, fs::File, io::Write};
-
 use assembler::Assembler;
+use clap::Parser;
 use colorize::AnsiColor;
 use emmitter::package;
+use std::{fmt, fs::File, io::Write};
 use tokenizer::{tokenize, Lexeme, Source};
 
 mod assembler;
@@ -73,16 +73,32 @@ fn main() {
     }
 }
 
+const default_out: &str = "nisvc-out";
+
+#[derive(Parser, Debug)]
+#[command(version,about,long_about=None)]
+struct Args {
+    #[arg(short, long,default_value_t = String::from("nisvc-out"))]
+    output_file: String,
+    #[arg(short, long, default_value_t = 0)]
+    verbosity: usize,
+    #[arg()]
+    sources: Vec<String>,
+}
+
 fn real_main() -> Result<(), AssembleError> {
-    let path = "nisvc.out";
+    let args = Args::parse();
+    println!("{args:?}");
+    let path = args.output_file;
     let mut sources = Source::new();
-    sources.open_file("raw_rgb24_viewer.nsm")?;
+    for file in args.sources {
+        sources.open_file(&file)?;
+    }
     let tokens = tokenize(&sources)?;
-    println!("{tokens:#?}");
     let (entry_point, data, program, debug_symbols) =
         Assembler::assemble(tokens).map_err(|e| e.traceback(&sources))?;
     let exe_package = package(entry_point, data, program, debug_symbols);
-    let mut out = File::create(path)
+    let mut out = File::create(&path)
         .map_err(|e| AssembleError::new(format!("failed to create {path}: {e}")))?;
     out.write_all(&exe_package)
         .map_err(|e| AssembleError::new(format!("failed to write to {path}: {e}")))?;
