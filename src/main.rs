@@ -6,10 +6,9 @@ use std::{fmt, fs::File, io::Write};
 use tokenizer::{tokenize, Lexeme, Source};
 
 mod assembler;
-mod data;
 mod emmitter;
+mod instruction;
 mod tokenizer;
-
 #[derive(Debug)]
 pub struct AssembleError {
     error: String,
@@ -84,20 +83,37 @@ struct Args {
     verbosity: usize,
     #[arg()]
     sources: Vec<String>,
+    #[arg(short, long)]
+    stdlib: Option<String>,
 }
 
 fn real_main() -> Result<(), AssembleError> {
     let args = Args::parse();
     println!("{args:?}");
     let path = args.output_file;
-    let mut sources = Source::new();
-    for file in args.sources {
-        sources.open_file(&file)?;
+    // let mut sources = Source::new();
+    // for file in args.sources {
+    //     sources.open_file(&file)?;
+    // }
+    // let tokens = tokenize(&sources)?;
+    // let (entry_point, data, program, debug_symbols) =
+    //     Assembler::assemble(tokens).map_err(|e| e.traceback(&sources))?;
+    if args.sources.is_empty() {
+        return Err(AssembleError::new("no source files provided".to_string()));
     }
-    let tokens = tokenize(&sources)?;
-    let (entry_point, data, program, debug_symbols) =
-        Assembler::assemble(tokens).map_err(|e| e.traceback(&sources))?;
-    let exe_package = package(entry_point, data, program, debug_symbols);
+    let mut assembler = Assembler::new();
+    for file in args.sources {
+        assembler.parse_file(&file)?;
+    }
+    assembler.resolve()?;
+    let debug_symbols = assembler.build_debug_symbol_table();
+    let entry_point = if let Some(ep) = assembler.entry_point {
+        ep
+    } else {
+        return Err(AssembleError::new("entry point not declared".to_string()));
+    };
+    let program = assembler.emit();
+    let exe_package = package(entry_point, assembler.data, program, debug_symbols);
     let mut out = File::create(&path)
         .map_err(|e| AssembleError::new(format!("failed to create {path}: {e}")))?;
     out.write_all(&exe_package)
