@@ -1,0 +1,38 @@
+:include
+std_print
+
+:entry
+    _start
+
+:data
+    hello str "Hello, World!" $10;
+    len equ (. - $!hello);
+
+    other str "ANOTHER STRING!" $10;
+
+
+:program
+    !_start
+		ldi null,$1
+        ldi r1, @!hello
+        ldi r2, $!len
+		ldi r3b1,$1
+		push r3b1 # fd
+        push r1 # ptr
+        push r2 # len
+        int $2
+
+		push r2 # size
+		int $10 # malloc
+		pop r4 # allocated heap ptr
+
+		push r4 # reduntant
+		push r2 # len
+		push r1 # src
+		int $13 # memcpy
+
+		push r3b1 #fd
+		push r4 # ptr
+		push r2 # len
+		int $2
+        int $x14

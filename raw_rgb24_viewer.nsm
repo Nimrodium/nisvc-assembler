@@ -1,0 +1,51 @@
+:entry
+    _start
+:data
+    img str "cat.rgb24";
+    len equ (. - $!img);
+
+:program
+    !_start
+        pushi @!img
+        pushi $!len
+        int $x1
+        pop r1b1 # fd
+        push r1b1
+        int $x12 # get_file_size(r1b1)
+        pop r2
+        push r2
+        int $xa # malloc(r2)
+        pop r3 # fb_ptr
+
+        int $x13 # dump()
+
+        push r1b1 # fd
+        push r3 # fb
+        push r2 # n
+        int $x3 # read
+        # setup framebuffer
+        push r3
+        pushi $160
+        pushi $144
+        pushi $0
+        int $xf # init_fb(r3,160,144,0)
+        int $x10 # draw_fb()
+
+        pushi $!len
+        int $xa
+        pop r1 # malloc strlen ptr
+
+        pushi @!img
+        push r1
+        pushi $!len
+        int $xd # memcpy(img,r1,len)
+
+        pushi $1
+        push r1
+        pushi $!len
+        int $x2
+
+        # int $x13 # dump()
+        int $x14 # kill
+        # !_
+        # jmp $!_

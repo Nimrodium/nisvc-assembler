@@ -1,184 +1,124 @@
-use arg_parser::{FlagArg, ParsedCLIArgs};
 use assembler::Assembler;
+use clap::Parser;
 use colorize::AnsiColor;
-use constant::{DEFAULT_BINARY_NAME, NAME};
-use data::{AssemblyError, AssemblyErrorCode};
-use std::{fs::File, io::Write, process::exit};
+use emmitter::package;
+use std::{fmt, fs::File, io::Write, process::exit};
+use tokenizer::{Lexeme, Source};
 
-mod arg_parser;
 mod assembler;
-mod constant;
-mod data;
-mod debug_symbols;
-mod parser;
-
-static mut DEBUG_SYMBOLS: bool = false;
-static mut VERBOSE_FLAG: usize = 0;
-// static mut VERY_VERBOSE_FLAG: bool = false;
-// static mut VERY_VERY_VERBOSE_FLAG: bool = false;
-
-// will add line number later maybe
-fn handle_fatal_assembly_err(err: AssemblyError) -> ! {
-    println!("{err}");
-    exit(1)
+mod emmitter;
+mod instruction;
+mod tokenizer;
+const DEFAULT_STDLIB: &str = "~/.nisvc/stdlib/";
+#[derive(Debug)]
+pub struct AssembleError {
+    error: String,
+    lexeme: Option<Lexeme>,
+    trace: Option<String>,
 }
-
-fn _verbose_println(msg: &str) {
-    unsafe {
-        if VERBOSE_FLAG >= 1 {
-            println!("{NAME}: {} {}", "verbose:".yellow(), msg)
+impl AssembleError {
+    pub fn new(error: String) -> Self {
+        Self {
+            error,
+            lexeme: None,
+            trace: None,
         }
     }
-}
-fn _very_verbose_println(msg: &str) {
-    unsafe {
-        if VERBOSE_FLAG >= 2 {
-            println!("{NAME}: {} {}", "very-verbose:".yellow(), msg)
-        }
+    pub fn attach_lexeme(mut self, lexeme: &Lexeme) -> Self {
+        self.lexeme = Some(lexeme.clone());
+        self
     }
-}
-
-fn _very_very_verbose_println(msg: &str) {
-    unsafe {
-        if VERBOSE_FLAG >= 3 {
-            println!("{NAME}: {} {}", "very-very-verbose:".yellow(), msg)
+    pub fn traceback(mut self, source: &Source) -> Self {
+        if let Some(l) = &self.lexeme {
+            self.trace = Some(source.traceback(l));
+            self
+        } else {
+            self
         }
     }
 }
 
-fn write_file(image: &[u8], output_file: &str) -> Result<(), AssemblyError> {
-    let mut outf = match File::create(output_file) {
-        Ok(f) => f,
-        Err(err) => {
-            return Err(AssemblyError {
-                code: AssemblyErrorCode::OutputWriteError,
-                reason: format!("error opening file {output_file} :: {err}"),
-                metadata: None,
-            })
-        }
-    };
-    match outf.write_all(image) {
-        Ok(()) => (),
-        Err(err) => {
-            return Err(AssemblyError {
-                code: AssemblyErrorCode::OutputWriteError,
-                reason: format!("error writing to file {output_file} :: {err}"),
-                metadata: None,
-            })
-        }
-    };
-    Ok(())
+impl fmt::Display for AssembleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // let error = format!(
+        //     "{} {}\n{}",
+        //     "error:".redb(),
+        //     self.error,
+        //     if let Some(trace) = self.trace {
+        //         &trace
+        //     } else {
+        //         ""
+        //     }
+        // );
+        write!(
+            f,
+            "{} {}\n{}",
+            "error:".redb(),
+            self.error.clone().yellow(),
+            if let Some(trace) = &self.trace {
+                trace
+            } else {
+                ""
+            }
+        )
+    }
 }
-
-#[macro_export]
-macro_rules! verbose_println {
-    ($($arg:tt)*) => (crate::_verbose_println(&format!($($arg)*)));
-}
-#[macro_export]
-macro_rules! very_verbose_println {
-    ($($arg:tt)*) => (crate::_very_verbose_println(&format!($($arg)*)));
-}
-#[macro_export]
-macro_rules! very_very_verbose_println {
-    ($($arg:tt)*) => (crate::_very_very_verbose_println(&format!($($arg)*)));
-}
-
-fn help() -> ! {
-    println!("Usage: {NAME} [options...] [nisvc-asmfile...]\n\
-        Options:\n\
-        \t-h,     --help              -- print this message\n\
-        \t-v,     --verbose           -- enable verbose printing\n\
-        \t-vv,    --very-verbose      -- enable very verbose printing\n\
-        \t-vvv,   --very-very-verbose -- enable very very verbose printing\n\
-        \t-o,     --output <outfile>  -- output file (when not specified {DEFAULT_BINARY_NAME} will be used)"
-    );
-    exit(0)
-}
-
 fn main() {
-    let table = crate::data::RegisterTable::build_table();
-
-    let cli_args: Vec<String> = std::env::args().collect();
-    let flags = &[
-        FlagArg::new("output", 'o', 1),
-        FlagArg::new("help", 'h', 0),
-        FlagArg::new("verbose", 'v', 0),
-    ];
-    let flag_definitions: arg_parser::Flags = arg_parser::Flags::new(flags);
-    let parsed_args = match ParsedCLIArgs::parse_arguments(&flag_definitions, &cli_args) {
-        Ok(args) => args,
-        Err(why) => handle_fatal_assembly_err(AssemblyError {
-            code: AssemblyErrorCode::CLIArgParseError,
-            reason: why,
-            metadata: None,
-        }),
-    };
-    println!("{parsed_args:#?}");
-    let input_files = parsed_args.raw;
-    let mut output_file = DEFAULT_BINARY_NAME;
-    let mut verbosity = 0;
-    for arg in parsed_args.flags {
-        match arg.name {
-            "output" => output_file = arg.data[0],
-            "help" => help(),
-            "verbose" => verbosity += 1,
-            _ => panic!("invalid flag snuck past parser"),
+    match real_main() {
+        Ok(()) => (),
+        Err(e) => {
+            println!("{e}");
+            exit(1)
         }
     }
-    unsafe { VERBOSE_FLAG = verbosity }
-    verbose_println!("output file: {output_file}");
-    // println!("g");
-    if input_files.len() < 1 {
-        handle_fatal_assembly_err(AssemblyError {
-            code: AssemblyErrorCode::CLIArgParseError,
-            reason: "no input files".to_string(),
-            metadata: None,
-        })
-    }
+}
 
-    let mut assembler = Assembler::new();
-    for file in input_files {
-        very_verbose_println!("adding source file {file} to assembler");
-        match assembler.load_file(file) {
-            Ok(()) => (),
-            Err(err) => handle_fatal_assembly_err(err),
-        };
-    }
-    match assembler.is_entry_point_located() {
-        Ok(()) => verbose_println!(
-            "entry point label defined [ {} ]",
-            assembler.entry_point.as_ref().unwrap().name
-        ),
-        Err(err) => handle_fatal_assembly_err(err),
-    }
-    // generate IR
-    match assembler.parse() {
-        Ok(()) => (),
-        Err(err) => handle_fatal_assembly_err(err),
-    };
-    verbose_println!("passed checkpoint PARSED");
-    // resolve IR placeholder labels
-    match assembler.resolve() {
-        Ok(()) => (),
-        Err(err) => handle_fatal_assembly_err(err),
-    }
+#[derive(Parser, Debug)]
+#[command(version,about,long_about=None)]
+struct Args {
+    #[arg(short, long,default_value_t = String::from("nisvc.out"))]
+    output_file: String,
+    #[arg(short, long, default_value_t = 0)]
+    verbosity: usize,
+    #[arg()]
+    sources: Vec<String>,
+    #[arg(short, long)]
+    stdlib: Option<String>,
+}
 
-    match assembler.resolve_entry_point() {
-        Ok(()) => (),
-        Err(err) => handle_fatal_assembly_err(err),
-    };
-    verbose_println!("passed checkpoint RESOLVED");
-
-    very_verbose_println!("program:\n{}", assembler.program.clone().unwrap());
-    // generate nisvc machine code
-    let nisvc_ef = match assembler.package() {
-        Ok(i) => i,
-        Err(err) => handle_fatal_assembly_err(err),
-    };
-    // write machine code to file
-    match write_file(&nisvc_ef, output_file) {
-        Ok(()) => (),
-        Err(err) => handle_fatal_assembly_err(err),
+fn real_main() -> Result<(), AssembleError> {
+    let args = Args::parse();
+    // println!("{args:?}");
+    let path = args.output_file;
+    // let mut sources = Source::new();
+    // for file in args.sources {
+    //     sources.open_file(&file)?;
+    // }
+    // let tokens = tokenize(&sources)?;
+    // let (entry_point, data, program, debug_symbols) =
+    //     Assembler::assemble(tokens).map_err(|e| e.traceback(&sources))?;
+    if args.sources.is_empty() {
+        return Err(AssembleError::new("no source files provided".to_string()));
     }
-    println!("wrote binary file {output_file}");
+    let mut assembler = Assembler::new(args.stdlib);
+    for file in args.sources {
+        assembler.parse_file(&file)?;
+    }
+    assembler
+        .resolve()
+        .map_err(|e| e.traceback(&assembler.sources))?;
+    let entry_point = if let Some(ep) = assembler.entry_point {
+        ep
+    } else {
+        return Err(AssembleError::new("entry point not declared".to_string()));
+    };
+    let program = assembler.emit();
+    let debug_symbols = assembler.build_debug_symbol_table();
+    let exe_package = package(entry_point, assembler.data, program, debug_symbols);
+    let mut out = File::create(&path)
+        .map_err(|e| AssembleError::new(format!("failed to create {path}: {e}")))?;
+    out.write_all(&exe_package)
+        .map_err(|e| AssembleError::new(format!("failed to write to {path}: {e}")))?;
+    println!("built nisvc executable `{}`", path);
+    Ok(())
 }
