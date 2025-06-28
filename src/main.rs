@@ -2,13 +2,14 @@ use assembler::Assembler;
 use clap::Parser;
 use colorize::AnsiColor;
 use emmitter::package;
-use std::{fmt, fs::File, io::Write};
-use tokenizer::{tokenize, Lexeme, Source};
+use std::{fmt, fs::File, io::Write, process::exit};
+use tokenizer::{Lexeme, Source};
 
 mod assembler;
 mod emmitter;
 mod instruction;
 mod tokenizer;
+const DEFAULT_STDLIB: &str = "~/.nisvc/stdlib/";
 #[derive(Debug)]
 pub struct AssembleError {
     error: String,
@@ -67,17 +68,15 @@ fn main() {
         Ok(()) => (),
         Err(e) => {
             println!("{e}");
-            panic!()
+            exit(1)
         }
     }
 }
 
-const default_out: &str = "nisvc-out";
-
 #[derive(Parser, Debug)]
 #[command(version,about,long_about=None)]
 struct Args {
-    #[arg(short, long,default_value_t = String::from("nisvc-out"))]
+    #[arg(short, long,default_value_t = String::from("nisvc.out"))]
     output_file: String,
     #[arg(short, long, default_value_t = 0)]
     verbosity: usize,
@@ -89,7 +88,7 @@ struct Args {
 
 fn real_main() -> Result<(), AssembleError> {
     let args = Args::parse();
-    println!("{args:?}");
+    // println!("{args:?}");
     let path = args.output_file;
     // let mut sources = Source::new();
     // for file in args.sources {
@@ -101,22 +100,25 @@ fn real_main() -> Result<(), AssembleError> {
     if args.sources.is_empty() {
         return Err(AssembleError::new("no source files provided".to_string()));
     }
-    let mut assembler = Assembler::new();
+    let mut assembler = Assembler::new(args.stdlib);
     for file in args.sources {
         assembler.parse_file(&file)?;
     }
-    assembler.resolve()?;
-    let debug_symbols = assembler.build_debug_symbol_table();
+    assembler
+        .resolve()
+        .map_err(|e| e.traceback(&assembler.sources))?;
     let entry_point = if let Some(ep) = assembler.entry_point {
         ep
     } else {
         return Err(AssembleError::new("entry point not declared".to_string()));
     };
     let program = assembler.emit();
+    let debug_symbols = assembler.build_debug_symbol_table();
     let exe_package = package(entry_point, assembler.data, program, debug_symbols);
     let mut out = File::create(&path)
         .map_err(|e| AssembleError::new(format!("failed to create {path}: {e}")))?;
     out.write_all(&exe_package)
         .map_err(|e| AssembleError::new(format!("failed to write to {path}: {e}")))?;
+    println!("built nisvc executable `{}`", path);
     Ok(())
 }

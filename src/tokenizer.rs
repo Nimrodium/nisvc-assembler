@@ -1,4 +1,9 @@
-use std::{collections::HashMap, fs::File, io::Read, iter::repeat_n};
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::{stdout, Read, Write},
+    iter::repeat_n,
+};
 
 use colorize::AnsiColor;
 
@@ -19,7 +24,7 @@ impl Source {
     }
     pub fn open_file(&mut self, path: &str) -> Result<(usize, String), AssembleError> {
         let mut f = File::open(path)
-            .map_err(|e| AssembleError::new(format!("could not open file `{path}`:")))?;
+            .map_err(|e| AssembleError::new(format!("could not open file `{path}`: {e}")))?;
         let mut contents: String = String::new();
         f.read_to_string(&mut contents).map_err(|e| {
             AssembleError::new(format!("could not read file `{path}` into memory: {e}"))
@@ -31,15 +36,23 @@ impl Source {
         Ok((fd, contents))
     }
     pub fn traceback(&self, lexeme: &Lexeme) -> String {
-        let mut file = self.files.get(&lexeme.fd).unwrap().lines();
+        let file = self.files.get(&lexeme.fd).unwrap().lines();
         let path = self.paths.get(&lexeme.fd).unwrap();
+        let n = lexeme.line - 1; // no idea
+
         let line: String = file
-            .nth(lexeme.line)
-            .expect(&format!("failed to get line `{}`", lexeme.line))
+            .clone()
+            .nth(n)
+            .expect(&format!(
+                "failed to get line `{}`, lexeme {}, in file {path}\n {:#?}",
+                n,
+                lexeme.s,
+                file.enumerate().collect::<Vec<(usize, &str)>>(),
+            ))
             .to_string();
 
         let highlight = {
-            let mut buf: String = repeat_n(' ', lexeme.column.saturating_sub(1)).collect();
+            let mut buf: String = repeat_n(' ', lexeme.column.saturating_sub(2)).collect();
             buf.push_str("^".red().as_str());
             let squigle: String = repeat_n('~', lexeme.s.len().saturating_sub(1)).collect();
             buf.push_str(&(squigle.yellow()));
@@ -48,8 +61,8 @@ impl Source {
 
         let msg = format!(
             "at {path}:{}:{}:\n{line}\n{highlight}",
-            lexeme.line + 1,
-            lexeme.column + 1,
+            lexeme.line,
+            lexeme.column - 1,
         );
         msg
     }
@@ -145,17 +158,27 @@ enum TokenizerState {
     StrEsc,
     Comment,
 }
-
+pub fn newline(line: &mut usize, column: &mut usize) {
+    *line += 1;
+    *column = 0;
+    // print!("{line}: ");
+    // stdout().flush();
+}
 pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, AssembleError> {
+    // println!("---");
+
     let mut tokens: Vec<Token> = Vec::new();
     let mut state = TokenizerState::Initial;
     let mut column = 0;
     let mut line = 0;
+    newline(&mut line, &mut column);
     let mut token_column_start = 0;
     let mut lexeme_buffer = String::new();
     let mut char_iter = file_content.chars();
     let mut old_char = 0 as char;
     let mut advance = true;
+    // print!("{line}: ");
+    // stdout().flush();
     loop {
         let chr = if advance {
             match char_iter.next() {
@@ -171,6 +194,9 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
         // }
         // for chr in file.chars() {
         column += 1;
+
+        // print!("{chr}");
+        stdout().flush();
         match state {
             TokenizerState::Initial => {
                 token_column_start = column;
@@ -178,8 +204,7 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
                     '#' => state = TokenizerState::Comment,
                     ' ' | '\t' => continue,
                     '\n' => {
-                        line += 1;
-                        column = 0;
+                        newline(&mut line, &mut column);
                         continue;
                     }
                     ':' => state = TokenizerState::BuildingSection,
@@ -246,8 +271,7 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
             }
             TokenizerState::Comment => match chr {
                 '\n' => {
-                    line += 1;
-                    column = 0;
+                    newline(&mut line, &mut column);
                     state = TokenizerState::Initial;
                     lexeme_buffer.clear();
                 }
@@ -272,8 +296,7 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
                         }
                     }
                     if chr == '\n' {
-                        line += 1;
-                        column = 0;
+                        newline(&mut line, &mut column);
                     }
                     lexeme_buffer.clear();
                 }
@@ -292,8 +315,7 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
                     )));
                     lexeme_buffer.clear();
                     if chr == '\n' {
-                        line += 1;
-                        column = 0;
+                        newline(&mut line, &mut column);
                     }
                     state = TokenizerState::Initial;
                 }
@@ -312,8 +334,7 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
                     }
                     lexeme_buffer.clear();
                     if chr == '\n' {
-                        line += 1;
-                        column = 0;
+                        newline(&mut line, &mut column);
                     };
                     state = TokenizerState::Initial;
                 }
@@ -361,254 +382,6 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
         token_column_start,
         fd,
     )));
-    Ok(tokens)
-}
-
-pub fn tokenize(source: &Source) -> Result<Vec<Token>, AssembleError> {
-    let mut tokens: Vec<Token> = Vec::new();
-    let mut state = TokenizerState::Initial;
-    let mut token_column_start = 0;
-
-    for (fd, file) in &source.files {
-        let mut column = 0;
-        let mut line = 0;
-        token_column_start = 0;
-        let mut lexeme_buffer = String::new();
-        let mut char_iter = file.chars();
-        let mut old_char = 0 as char;
-        let mut advance = true;
-        loop {
-            let chr = if advance {
-                match char_iter.next() {
-                    Some(c) => c,
-                    None => break,
-                }
-            } else {
-                advance = true;
-                old_char
-            };
-            old_char = chr;
-
-            // }
-            // for chr in file.chars() {
-            column += 1;
-            match state {
-                TokenizerState::Initial => {
-                    token_column_start = column;
-                    match chr {
-                        '#' => state = TokenizerState::Comment,
-                        ' ' | '\t' => continue,
-                        '\n' => {
-                            line += 1;
-                            column = 0;
-                            continue;
-                        }
-                        ':' => state = TokenizerState::BuildingSection,
-                        '(' => tokens.push(Token::OpenParen(Lexeme::new(
-                            "(",
-                            line,
-                            token_column_start,
-                            *fd,
-                        ))),
-                        ')' => tokens.push(Token::ClosedParen(Lexeme::new(
-                            ")",
-                            line,
-                            token_column_start,
-                            *fd,
-                        ))),
-                        '"' => state = TokenizerState::BuildingString,
-                        '[' => tokens.push(Token::OpenBracket(Lexeme::new(
-                            "[",
-                            line,
-                            token_column_start,
-                            *fd,
-                        ))),
-                        ']' => tokens.push(Token::ClosedBracket(Lexeme::new(
-                            "]",
-                            line,
-                            token_column_start,
-                            *fd,
-                        ))),
-                        '*' => tokens.push(Token::Star(Lexeme::new(
-                            "*",
-                            line,
-                            token_column_start,
-                            *fd,
-                        ))),
-                        '+' => tokens.push(Token::Plus(Lexeme::new(
-                            "+",
-                            line,
-                            token_column_start,
-                            *fd,
-                        ))),
-                        '-' => tokens.push(Token::Dash(Lexeme::new(
-                            "-",
-                            line,
-                            token_column_start,
-                            *fd,
-                        ))),
-                        '/' => tokens.push(Token::Slash(Lexeme::new(
-                            "/",
-                            line,
-                            token_column_start,
-                            *fd,
-                        ))),
-
-                        ';' => tokens.push(Token::SemiColon(Lexeme::new(
-                            ";",
-                            line,
-                            token_column_start,
-                            *fd,
-                        ))),
-                        ',' => tokens.push(Token::Comma(Lexeme::new(
-                            ",",
-                            line,
-                            token_column_start,
-                            *fd,
-                        ))),
-                        '.' => {
-                            tokens.push(Token::Dot(Lexeme::new(".", line, token_column_start, *fd)))
-                        }
-                        '%' => {
-                            tokens.push(Token::Dot(Lexeme::new("%", line, token_column_start, *fd)))
-                        }
-                        '0'..='9' => {
-                            return Err(AssembleError::new(format!("invalid word"))
-                                .attach_lexeme(&Lexeme::new(&lexeme_buffer, line, column, *fd))
-                                .traceback(&source))
-                        }
-                        '@' | '$' => {
-                            let offset = match chr {
-                                '@' => true,
-                                '$' => false,
-                                _ => unreachable!(),
-                            };
-                            state = TokenizerState::BuildingConstant(offset);
-                        }
-                        _ => {
-                            lexeme_buffer.push(chr);
-                            state = TokenizerState::BuildingKeyWord;
-                        }
-                    }
-                }
-                TokenizerState::Comment => match chr {
-                    '\n' => {
-                        line += 1;
-                        column = 0;
-                        state = TokenizerState::Initial;
-                        lexeme_buffer.clear();
-                    }
-                    _ => continue,
-                },
-                TokenizerState::BuildingSection => match chr {
-                    '\n' | ' ' => {
-                        state = TokenizerState::Initial;
-                        tokens.push(Token::EOS(Lexeme::new("End Of Section", line, column, *fd)));
-                        let lexeme = Lexeme::new(&lexeme_buffer, line, column, *fd);
-                        match lexeme_buffer.as_str() {
-                            "data" => tokens.push(Token::DATA(lexeme)),
-                            "entry" => tokens.push(Token::ENTRYPOINT(lexeme)),
-                            "program" => tokens.push(Token::PROGRAM(lexeme)),
-                            "include" => tokens.push(Token::INCLUDE(lexeme)),
-                            _ => {
-                                println!("{tokens:?}");
-                                return Err(AssembleError::new(format!(
-                                    "invalid section header `{lexeme_buffer}`"
-                                ))
-                                .attach_lexeme(&lexeme)
-                                .traceback(source));
-                            }
-                        }
-                        if chr == '\n' {
-                            line += 1;
-                            column = 0;
-                        }
-                        lexeme_buffer.clear();
-                    }
-                    _ => lexeme_buffer.push(chr),
-                },
-
-                TokenizerState::BuildingKeyWord => match chr {
-                    'a'..='z' | 'A'..='Z' | '_' | '!' | '0'..='9' => lexeme_buffer.push(chr),
-                    '#' => state = TokenizerState::Comment,
-                    _ => {
-                        tokens.push(Token::KeyWord(Lexeme::new(
-                            &lexeme_buffer,
-                            line,
-                            token_column_start,
-                            *fd,
-                        )));
-                        lexeme_buffer.clear();
-                        if chr == '\n' {
-                            line += 1;
-                            column = 0;
-                        }
-                        state = TokenizerState::Initial;
-                    }
-                },
-
-                TokenizerState::BuildingConstant(offset) => match chr {
-                    'a'..='z' | 'A'..='Z' | '_' | '!' | '0'..='9' => lexeme_buffer.push(chr),
-                    '#' => state = TokenizerState::Comment,
-                    _ => {
-                        tokens.push(Token::Constant(
-                            Lexeme::new(&lexeme_buffer, line, token_column_start, *fd),
-                            offset,
-                        ));
-                        if chr != '"' {
-                            advance = false;
-                        }
-                        lexeme_buffer.clear();
-                        if chr == '\n' {
-                            line += 1;
-                            column = 0;
-                        };
-                        state = TokenizerState::Initial;
-                    }
-                },
-                TokenizerState::BuildingString => match chr {
-                    '"' => {
-                        tokens.push(Token::String(Lexeme::new(
-                            &lexeme_buffer,
-                            line,
-                            token_column_start,
-                            *fd,
-                        )));
-                        lexeme_buffer.clear();
-                        state = TokenizerState::Initial
-                    }
-                    '\\' => state = TokenizerState::StrEsc,
-                    _ => lexeme_buffer.push(chr),
-                },
-
-                TokenizerState::StrEsc => {
-                    let esc_char = match chr {
-                        '\\' => '\\',
-                        'n' => '\n',
-                        't' => '\t',
-                        'r' => '\r',
-                        '\'' => '\'',
-                        '"' => '"',
-                        '0' => '\0',
-                        'b' => '\x08',
-                        _ => {
-                            return Err(AssembleError::new(format!(
-                                "invalid escape sequence >>\"\\{chr}\"<< "
-                            )))
-                        }
-                    };
-                    lexeme_buffer.push(esc_char);
-                    state = TokenizerState::BuildingString;
-                }
-            }
-        }
-        tokens.push(Token::EOS(Lexeme::new("End Of Section", line, column, *fd)));
-        tokens.push(Token::EOF(Lexeme::new(
-            "EOF SENTINEL",
-            line.saturating_sub(1),
-            token_column_start,
-            *fd,
-        )));
-    }
+    // println!("{tokens:#?}");
     Ok(tokens)
 }

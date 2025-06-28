@@ -8,7 +8,7 @@ use std::{
 use crate::{
     instruction::{Instruction, RegHandle},
     tokenizer::{tokenize_file, Lexeme, Source, Token},
-    AssembleError,
+    AssembleError, DEFAULT_STDLIB,
 };
 
 macro_rules! invalid_token_err {
@@ -106,7 +106,8 @@ pub struct Assembler {
     program_size: u64,
     pub entry_point: Option<u64>,
     includes: HashSet<String>,
-    sources: Source,
+    pub sources: Source,
+    stdlib: String,
 }
 
 enum Section {
@@ -119,23 +120,7 @@ enum Section {
 }
 
 impl Assembler {
-    // pub fn assemble(
-    //     tokens: Vec<Token>,
-    //     stdlib_path: Option<String>,
-    // ) -> Result<(u64, Vec<u8>, Vec<u8>, Vec<u8>), AssembleError> {
-    //     let mut assembler = Self::new();
-    //     assembler.parse(tokens)?;
-    //     assembler.resolve()?;
-    //     let program = assembler.emit();
-    //     let debug_symbols = assembler.build_debug_symbol_table();
-    //     let entry_point = if let Some(ep) = assembler.entry_point {
-    //         ep
-    //     } else {
-    //         return Err(AssembleError::new(format!("no entry point defined")));
-    //     };
-    //     Ok((entry_point, assembler.data, program, debug_symbols))
-    // }
-    pub fn new() -> Self {
+    pub fn new(stdlib: Option<String>) -> Self {
         Self {
             labels: HashMap::new(),
             program_intermediate: Vec::new(),
@@ -144,13 +129,18 @@ impl Assembler {
             entry_point: None,
             includes: HashSet::new(),
             sources: Source::new(),
+            stdlib: if let Some(sl) = stdlib {
+                sl
+            } else {
+                DEFAULT_STDLIB.to_string()
+            },
         }
     }
 
     pub fn parse_file(&mut self, file_path: &str) -> Result<(), AssembleError> {
         let (fd, file_content) = self.sources.open_file(file_path)?;
         let tokens = tokenize_file(fd, &file_content)?;
-        self.parse(tokens)?;
+        self.parse(tokens).map_err(|e| e.traceback(&self.sources))?;
         Ok(())
     }
     pub fn build_debug_symbol_table(&self) -> Vec<u8> {
@@ -191,23 +181,23 @@ impl Assembler {
         }
         Ok(())
     }
-    // fn include(&mut self, std_lib_mod: &str) -> Result<(), AssembleError> {
-    //     if !self.includes.contains(std_lib_mod) {
-
-    //         let path = self.get_include_path(std_lib_mod)
-
-    //         self.includes.insert(std_lib_mod.to_string());
-    //     }
-
-    //     Ok(())
-    // }
 
     fn get_include_path(&self, std_lib_mod: &str) -> Result<String, AssembleError> {
-        let name: Vec<String> = std_lib_mod.split('.').map(|s| s.to_string()).collect();
+        let name: Vec<String> = std_lib_mod.split("_").map(|s| s.to_string()).collect();
         match name
             .get(0)
-            .ok_or(AssembleError::new(format!("invalid module name")))?
+            .ok_or(AssembleError::new(format!(
+                "invalid module name {std_lib_mod}"
+            )))?
+            .as_str()
         {
+            "std" => {
+                let mod_name = name.get(1).ok_or(AssembleError::new(format!(
+                    "invalid module name {std_lib_mod}"
+                )))?;
+                let path = format!("{}/{mod_name}.nsm", self.stdlib);
+                Ok(path)
+            }
             _ => Err(AssembleError::new(format!(
                 "unsupported module root {} in {std_lib_mod}",
                 name[0]
@@ -232,7 +222,11 @@ impl Assembler {
                     for token in stream.by_ref() {
                         match token {
                             Token::KeyWord(lexeme) => {
-                                // includes.insert(lexeme.s);
+                                if !self.includes.contains(&lexeme.s) {
+                                    let path = self.get_include_path(&lexeme.s)?;
+                                    self.parse_file(&path)?;
+                                    self.includes.insert(lexeme.s);
+                                }
                             }
                             _ => break,
                         }
@@ -268,7 +262,7 @@ impl Assembler {
                 }
             }
         }
-        println!("{program_intermediate:?}");
+        // println!("{program_intermediate:?}");
 
         let program_intermediate = if let Some(p) = program_intermediate {
             p
@@ -309,7 +303,7 @@ impl Assembler {
             match token {
                 Token::KeyWord(lexeme) => {
                     if lexeme.s.starts_with('!') {
-                        println!("found program label `{}` : {pc}", lexeme.s);
+                        // println!("found program label `{}` : {pc}", lexeme.s);
                         program_labels.push((lexeme.s.strip_prefix('!').unwrap().to_string(), pc));
                     } else {
                         let (instr, instr_size) = Instruction::new(&lexeme, tokens)?;
@@ -340,6 +334,7 @@ impl Assembler {
     ) -> Result<(), AssembleError> {
         loop {
             let token = stream.next().unwrap();
+            // println!("data-token {token:?}");
             match token {
                 Token::KeyWord(lexeme) => {
                     let mut label: (String, (u64, bool)) =
@@ -485,7 +480,7 @@ fn resolve_label(
     lexeme: &Lexeme,
     expected_offset: bool,
 ) -> Result<u64, AssembleError> {
-    println!("labels: {labels:?}");
+    // println!("labels: {labels:?}");
     let constant = parse_constant(lexeme, expected_offset)?;
     match constant {
         Label::Resolved(value, offset) => {
@@ -701,7 +696,8 @@ fn build_expression(
         Token::OpenParen(lexeme) => build_expression(dc, stream, labels)?,
         _ => invalid_token_err!("invalid token in expression `{}`", right_token)?,
     };
-    println!("token after parsing expr `{:?}`", stream.next().unwrap());
+    let token_after = stream.next().unwrap();
+    // println!("token after parsing expr `{:?}`", token_after);
     match center_token {
         Token::Plus(_) => Ok(DataExprNode::Add(Box::new(left), Box::new(right))),
         Token::Dash(_) => Ok(DataExprNode::Sub(Box::new(left), Box::new(right))),
