@@ -112,6 +112,7 @@ fn real_main() -> Result<(), AssembleError> {
     } else {
         return Err(AssembleError::new("entry point not declared".to_string()));
     };
+    println!("{:#?}", assembler.labels);
     let program = assembler.emit();
     let debug_symbols = assembler.build_debug_symbol_table();
     let exe_package = package(entry_point, assembler.data, program, debug_symbols);

@@ -66,14 +66,6 @@ impl Label {
     }
 }
 
-enum ParserSectionState {
-    Initial,
-    Program,
-    Data,
-    Entry,
-    Include,
-}
-
 enum WordSize {
     B1,
     B2,
@@ -100,7 +92,7 @@ impl WordSize {
     }
 }
 pub struct Assembler {
-    labels: HashMap<String, (u64, bool)>,
+    pub labels: HashMap<String, (u64, bool)>,
     program_intermediate: Vec<Instruction>,
     pub data: Vec<u8>,
     program_size: u64,
@@ -110,14 +102,14 @@ pub struct Assembler {
     stdlib: String,
 }
 
-enum Section {
-    Uninit,
-    Include,
-    Entry,
-    Data,
-    Program,
-    EOF,
-}
+// enum Section {
+//     Uninit,
+//     Include,
+//     Entry,
+//     Data,
+//     Program,
+//     EOF,
+// }
 
 impl Assembler {
     pub fn new(stdlib: Option<String>) -> Self {
@@ -139,6 +131,7 @@ impl Assembler {
 
     pub fn parse_file(&mut self, file_path: &str) -> Result<(), AssembleError> {
         let (fd, file_content) = self.sources.open_file(file_path)?;
+        println!("parsing file {file_path}");
         let tokens = tokenize_file(fd, &file_content)?;
         self.parse(tokens).map_err(|e| e.traceback(&self.sources))?;
         Ok(())
@@ -245,6 +238,7 @@ impl Assembler {
                     self.parse_data(&mut stream)?;
                 }
                 Token::ENTRYPOINT(_) => {
+                    // println!("hes lying the entry point is right here");
                     // let (label, address) = Self::parse_entry(&mut stream)?;
                     let token = stream.next().unwrap();
                     match token {
@@ -281,16 +275,15 @@ impl Assembler {
         };
 
         self.program_intermediate.extend(program_intermediate);
-        self.entry_point = entry_point;
+        println!("setting entry point to {entry_point:?}");
+        if self.entry_point.is_none() && entry_point.is_some() {
+            self.entry_point = entry_point;
+        }
+        // self.entry_point = entry_point;
         // self.data.extend(data);
         Ok(())
     }
 
-    // fn parse_entry(
-    //     stream: &mut Peekable<vec::IntoIter<Token>>,
-    // ) -> Result<(String, AssembleError> {
-
-    // }
     fn parse_program(
         tokens: &mut Peekable<vec::IntoIter<Token>>,
         pc: u64,
@@ -307,6 +300,7 @@ impl Assembler {
                         program_labels.push((lexeme.s.strip_prefix('!').unwrap().to_string(), pc));
                     } else {
                         let (instr, instr_size) = Instruction::new(&lexeme, tokens)?;
+                        println!("parsed instruction {instr:?} with size {instr_size}B");
                         pc += instr_size;
                         program.push(instr);
                     }
@@ -608,6 +602,21 @@ fn parse_constant(lexeme: &Lexeme, offset: bool) -> Result<Label, AssembleError>
             })?;
             let value = unsafe { transmute::<f64, u64>(float) };
             Ok(Label::Resolved(value, offset))
+        }
+        'c' => {
+            let stripped = lexeme.s.strip_prefix('c').unwrap();
+            if stripped.len() != 1 {
+                return Err(AssembleError::new(format!(
+                    "char constant contained more than one character"
+                ))
+                .attach_lexeme(lexeme));
+            }
+            let chr = stripped.as_bytes()[0];
+            println!(
+                "DEBUG `{}` CONVERTED TO `{chr}` == `{}`",
+                lexeme.s, chr as char
+            );
+            Ok(Label::Resolved(chr as u64, offset))
         }
         _ => {
             if !lexeme.s.chars().nth(0).unwrap().is_ascii_digit() {

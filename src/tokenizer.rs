@@ -158,9 +158,11 @@ enum TokenizerState {
     StrEsc,
     Comment,
 }
-pub fn newline(line: &mut usize, column: &mut usize) {
+pub fn newline(line: &mut usize, column: &mut usize, caller: &str) {
     *line += 1;
     *column = 0;
+    print!("{caller}\t: NEW LINE {line}");
+
     // print!("{line}: ");
     // stdout().flush();
 }
@@ -171,7 +173,7 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
     let mut state = TokenizerState::Initial;
     let mut column = 0;
     let mut line = 0;
-    newline(&mut line, &mut column);
+    newline(&mut line, &mut column, "init");
     let mut token_column_start = 0;
     let mut lexeme_buffer = String::new();
     let mut char_iter = file_content.chars();
@@ -179,6 +181,8 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
     let mut advance = true;
     // print!("{line}: ");
     // stdout().flush();
+    //
+    let mut debug_print_char_flag = false;
     loop {
         let chr = if advance {
             match char_iter.next() {
@@ -190,13 +194,21 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
             old_char
         };
         old_char = chr;
-
+        if chr == '\n' {
+            println!(
+                "chr is newline, length of iter() {}",
+                char_iter.clone().collect::<Vec<char>>().len()
+            );
+        }
+        // print!("New Char");
+        if debug_print_char_flag {
+            print!("[{}]", chr.escape_debug());
+            stdout().flush();
+        }
         // }
         // for chr in file.chars() {
         column += 1;
 
-        // print!("{chr}");
-        stdout().flush();
         match state {
             TokenizerState::Initial => {
                 token_column_start = column;
@@ -204,7 +216,8 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
                     '#' => state = TokenizerState::Comment,
                     ' ' | '\t' => continue,
                     '\n' => {
-                        newline(&mut line, &mut column);
+                        debug_print_char_flag = false;
+                        newline(&mut line, &mut column, "initial-empty-line");
                         continue;
                     }
                     ':' => state = TokenizerState::BuildingSection,
@@ -271,7 +284,7 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
             }
             TokenizerState::Comment => match chr {
                 '\n' => {
-                    newline(&mut line, &mut column);
+                    newline(&mut line, &mut column, "comment-end");
                     state = TokenizerState::Initial;
                     lexeme_buffer.clear();
                 }
@@ -296,13 +309,13 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
                         }
                     }
                     if chr == '\n' {
-                        newline(&mut line, &mut column);
+                        newline(&mut line, &mut column, "section-build-unreachable?");
                     }
                     lexeme_buffer.clear();
                 }
                 _ => lexeme_buffer.push(chr),
             },
-
+            // keywords are opcode mnemonics and registers
             TokenizerState::BuildingKeyWord => match chr {
                 'a'..='z' | 'A'..='Z' | '_' | '!' | '0'..='9' => lexeme_buffer.push(chr),
                 '#' => state = TokenizerState::Comment,
@@ -315,27 +328,30 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
                     )));
                     lexeme_buffer.clear();
                     if chr == '\n' {
-                        newline(&mut line, &mut column);
+                        newline(&mut line, &mut column, "keyword-end-in-\\n");
                     }
                     state = TokenizerState::Initial;
                 }
             },
-
+            // any value
             TokenizerState::BuildingConstant(offset) => match chr {
                 'a'..='z' | 'A'..='Z' | '_' | '!' | '0'..='9' => lexeme_buffer.push(chr),
                 '#' => state = TokenizerState::Comment,
                 _ => {
+                    println!("built new constant {lexeme_buffer} at {line}:{token_column_start}");
                     tokens.push(Token::Constant(
                         Lexeme::new(&lexeme_buffer, line, token_column_start, fd),
                         offset,
                     ));
-                    if chr != '"' {
+                    if chr != '"' && chr != '\n' {
                         advance = false;
                     }
                     lexeme_buffer.clear();
                     if chr == '\n' {
-                        newline(&mut line, &mut column);
+                        // println!("New line skipped because appar");
+                        newline(&mut line, &mut column, "constant-end-in-\\n");
                     };
+                    debug_print_char_flag = true;
                     state = TokenizerState::Initial;
                 }
             },
