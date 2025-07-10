@@ -132,8 +132,14 @@ impl Assembler {
     pub fn parse_file(&mut self, file_path: &str) -> Result<(), AssembleError> {
         let (fd, file_content) = self.sources.open_file(file_path)?;
         println!("parsing file {file_path}");
+        let old_pc = self.program_size;
         let tokens = tokenize_file(fd, &file_content)?;
         self.parse(tokens).map_err(|e| e.traceback(&self.sources))?;
+        println!(
+            "parsed file {file_path}, {old_pc}pc +{}pc ({})",
+            self.program_size - old_pc,
+            self.program_size
+        );
         Ok(())
     }
     pub fn build_debug_symbol_table(&self) -> Vec<u8> {
@@ -147,9 +153,17 @@ impl Assembler {
     }
     pub fn emit(&self) -> Vec<u8> {
         let mut program_image = Vec::<u8>::new();
+        let mut pc = 0;
         for instruction in &self.program_intermediate {
-            program_image.extend(instruction.compile());
+            let compiled = instruction.compile();
+            pc += compiled.len();
+            println!(
+                "compiled {instruction:?} -> {compiled:x?} +{} ({pc})",
+                compiled.len()
+            );
+            program_image.extend(compiled);
         }
+        println!("program_size: {}\nreal_size: {pc}", self.program_size);
         program_image
     }
     pub fn resolve(&mut self) -> Result<(), AssembleError> {
@@ -231,7 +245,8 @@ impl Assembler {
                     for (name, address) in program_labels {
                         self.labels.insert(name, (address, false));
                     }
-                    self.program_size += added_pc;
+                    // println!("ADDED {} + {added_pc}", self.program_size);
+                    self.program_size = added_pc;
                     program_intermediate = Some(program);
                 }
                 Token::DATA(_) => {
@@ -243,6 +258,7 @@ impl Assembler {
                     let token = stream.next().unwrap();
                     match token {
                         Token::KeyWord(lexeme) => {
+                            println!("entry point label: {}", lexeme.s);
                             entry_point_label =
                                 Some(Label::Unresolved(lexeme.s.clone(), false, lexeme))
                         }
@@ -266,6 +282,7 @@ impl Assembler {
 
         let entry_point = if let Some(mut e) = entry_point_label {
             e.resolve(&self.labels, self.program_size)?;
+            // println!("entrypoint at {}");
             match e {
                 Label::Resolved(v, _) => Some(v),
                 Label::Unresolved(_, _, _) => unreachable!(),
@@ -275,8 +292,8 @@ impl Assembler {
         };
 
         self.program_intermediate.extend(program_intermediate);
-        println!("setting entry point to {entry_point:?}");
         if self.entry_point.is_none() && entry_point.is_some() {
+            println!("setting entry point to {entry_point:?}");
             self.entry_point = entry_point;
         }
         // self.entry_point = entry_point;
@@ -298,9 +315,12 @@ impl Assembler {
                     if lexeme.s.starts_with('!') {
                         // println!("found program label `{}` : {pc}", lexeme.s);
                         program_labels.push((lexeme.s.strip_prefix('!').unwrap().to_string(), pc));
+                        println!("label {} found at {pc}", lexeme.s);
                     } else {
                         let (instr, instr_size) = Instruction::new(&lexeme, tokens)?;
-                        println!("parsed instruction {instr:?} with size {instr_size}B");
+                        println!(
+                            "parsed instruction {instr:?} with size {instr_size}B total: {pc}"
+                        );
                         pc += instr_size;
                         program.push(instr);
                     }

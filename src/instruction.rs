@@ -21,7 +21,7 @@ pub enum Instruction {
     Load {
         dest: RegHandle,
         n: RegHandle,
-        addr: RegHandle,
+        src: RegHandle,
     },
     Store {
         dest: RegHandle,
@@ -251,7 +251,7 @@ impl Instruction {
                 Self::Load {
                     dest: consume_register(stream)?,
                     n: consume_register(stream)?,
-                    addr: consume_register(stream)?,
+                    src: consume_register(stream)?,
                 },
                 4,
             )),
@@ -416,81 +416,7 @@ impl Instruction {
                 9,
             )),
             "ret" => Ok((Self::Ret, 1)),
-            // "fopen" => Ok((
-            //     Self::Fopen {
-            //         dest_fd: consume_register(stream)?,
-            //         file_path_str_ptr: consume_register(stream)?,
-            //         file_path_str_len: consume_register(stream)?,
-            //     },
-            //     4,
-            // )),
-            // "fread" => Ok((
-            //     Self::Fread {
-            //         fd: consume_register(stream)?,
-            //         buf_ptr: consume_register(stream)?,
-            //         buf_len: consume_register(stream)?,
-            //     },
-            //     4,
-            // )),
-            // "fwrite" => Ok((
-            //     Self::Fwrite {
-            //         fd: consume_register(stream)?,
-            //         buf_ptr: consume_register(stream)?,
-            //         buf_len: consume_register(stream)?,
-            //     },
-            //     4,
-            // )),
-            // "fseek" => Ok((
-            //     Self::Fseek {
-            //         fd: consume_register(stream)?,
-            //         seek: consume_register(stream)?,
-            //         direction: consume_register(stream)?,
-            //     },
-            //     4,
-            // )),
-            // "fclose" => Ok((
-            //     Self::Fclose {
-            //         fd: consume_register(stream)?,
-            //     },
-            //     2,
-            // )),
-            // "malloc" => Ok((
-            //     Self::Malloc {
-            //         dest_ptr: consume_register(stream)?,
-            //         size: consume_register(stream)?,
-            //     },
-            //     3,
-            // )),
-            // "realloc" => Ok((
-            //     Self::Realloc {
-            //         dest_ptr: consume_register(stream)?,
-            //         ptr: consume_register(stream)?,
-            //         new_size: consume_register(stream)?,
-            //     },
-            //     4,
-            // )),
-            // "free" => Ok((
-            //     Self::Free {
-            //         ptr: consume_register(stream)?,
-            //     },
-            //     2,
-            // )),
-            // "memcpy" => Ok((
-            //     Self::Memcpy {
-            //         dest: consume_register(stream)?,
-            //         n: consume_register(stream)?,
-            //         src: consume_register(stream)?,
-            //     },
-            //     4,
-            // )),
-            // "memset" => Ok((
-            //     Self::Memset {
-            //         dest: consume_register(stream)?,
-            //         n: consume_register(stream)?,
-            //         value: consume_register(stream)?,
-            //     },
-            //     4,
-            // )),
+
             "itof" => Ok((
                 Self::Itof {
                     destf: consume_register(stream)?,
@@ -585,7 +511,7 @@ impl Instruction {
                     _ => unreachable!(),
                 })
                 .collect(),
-            Instruction::Load { dest, n, addr } => vec![0x03, *dest, *n, *addr],
+            Instruction::Load { dest, n, src } => vec![0x03, *dest, *n, *src],
             Instruction::Store { dest, n, src } => vec![0x04, *dest, *n, *src],
             Instruction::Add { dest, op1, op2 } => vec![0x05, *dest, *op1, *op2],
             Instruction::Sub { dest, op1, op2 } => vec![0x06, *dest, *op1, *op2],
@@ -607,14 +533,14 @@ impl Instruction {
                     _ => unreachable!(),
                 })
                 .collect(),
-            Instruction::Jifz { addr, condition } => vec![0x13]
+            Instruction::Jifz { addr, condition } => vec![0x13, *condition]
                 .into_iter()
                 .chain(match addr {
                     Label::Resolved(v, _) => v.to_le_bytes(),
                     _ => unreachable!(),
                 })
                 .collect(),
-            Instruction::Jifnz { addr, condition } => vec![0x14]
+            Instruction::Jifnz { addr, condition } => vec![0x14, *condition]
                 .into_iter()
                 .chain(match addr {
                     Label::Resolved(v, _) => v.to_le_bytes(),
@@ -632,20 +558,10 @@ impl Instruction {
                     _ => unreachable!(),
                 })
                 .collect(),
-            Instruction::Ret => vec![],
-            // Instruction::Fopen { dest_fd, file_path_str_ptr, file_path_str_len } => vec![0],
-            // Instruction::Fread { fd, buf_ptr, buf_len } => vec![],
-            // Instruction::Fwrite { fd, buf_ptr, buf_len } => vec![],
-            // Instruction::Fseek { fd, seek, direction } => vec![],
-            // Instruction::Fclose { fd } => vec![],
-            // Instruction::Malloc { dest_ptr, size } => vec![],
-            // Instruction::Realloc { dest_ptr, ptr, new_size } => vec![],
-            // Instruction::Free { ptr } => vec![],
-            // Instruction::Memcpy { dest, n, src } => vec![],
-            // Instruction::Memset { dest, n, value } => vec![],
-            Instruction::Itof { destf, srci } => vec![0x1b, *destf, *srci],
-            Instruction::Ftoi { desti, srcf } => vec![0x1c, *desti, *srcf],
-            Instruction::Fadd { dest, op1, op2 } => vec![0x1d, *dest, *op1, *op2],
+            Instruction::Ret => vec![0x1b],
+            Instruction::Itof { destf, srci } => vec![0x1c, *destf, *srci],
+            Instruction::Ftoi { desti, srcf } => vec![0x1d, *desti, *srcf],
+            Instruction::Fadd { dest, op1, op2 } => vec![0x1e, *dest, *op1, *op2],
             Instruction::Fsub { dest, op1, op2 } => vec![0x1f, *dest, *op1, *op2],
             Instruction::Fmult { dest, op1, op2 } => vec![0x20, *dest, *op1, *op2],
             Instruction::Fdiv { dest, op1, op2 } => vec![0x21, *dest, *op1, *op2],

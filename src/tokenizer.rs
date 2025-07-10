@@ -161,7 +161,7 @@ enum TokenizerState {
 pub fn newline(line: &mut usize, column: &mut usize, caller: &str) {
     *line += 1;
     *column = 0;
-    print!("{caller}\t: NEW LINE {line}");
+    // print!("{caller}\t: NEW LINE {line}");
 
     // print!("{line}: ");
     // stdout().flush();
@@ -195,15 +195,15 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
         };
         old_char = chr;
         if chr == '\n' {
-            println!(
-                "chr is newline, length of iter() {}",
-                char_iter.clone().collect::<Vec<char>>().len()
-            );
+            // println!(
+            //     "chr is newline, length of iter() {}",
+            //     char_iter.clone().collect::<Vec<char>>().len()
+            // );
         }
         // print!("New Char");
         if debug_print_char_flag {
-            print!("[{}]", chr.escape_debug());
-            stdout().flush();
+            // print!("[{}]", chr.escape_debug());
+            // stdout().flush();
         }
         // }
         // for chr in file.chars() {
@@ -338,7 +338,7 @@ pub fn tokenize_file(fd: usize, file_content: &str) -> Result<Vec<Token>, Assemb
                 'a'..='z' | 'A'..='Z' | '_' | '!' | '0'..='9' => lexeme_buffer.push(chr),
                 '#' => state = TokenizerState::Comment,
                 _ => {
-                    println!("built new constant {lexeme_buffer} at {line}:{token_column_start}");
+                    // println!("built new constant {lexeme_buffer} at {line}:{token_column_start}");
                     tokens.push(Token::Constant(
                         Lexeme::new(&lexeme_buffer, line, token_column_start, fd),
                         offset,
